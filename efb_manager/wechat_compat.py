@@ -11,7 +11,7 @@ import inspect
 import re
 import secrets
 import time
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import urljoin, urlsplit, urlunsplit
 import xml.etree.ElementTree as ET
 
 from .uos_constants import CLIENT_VERSION, EXTSPAM
@@ -19,6 +19,21 @@ from .uos_constants import CLIENT_VERSION, EXTSPAM
 
 class WeChatLoginError(RuntimeError):
     pass
+
+
+def login_address(url):
+    try:
+        parsed = urlsplit(url)
+        valid = (parsed.scheme == "https" and not parsed.username and not parsed.password
+                 and parsed.port in (None, 443)
+                 and re.fullmatch(r"wx\d*\.qq\.com|web\d*\.wechat\.com", parsed.hostname or "")
+                 and parsed.path.startswith("/cgi-bin/mmwebwx-bin/")
+                 and not any(ord(c) < 33 or c == "\\" for c in url))
+    except ValueError:
+        valid = False
+    if not valid:
+        raise WeChatLoginError("微信返回了不受支持的登录确认地址")
+    return parsed
 
 
 def install_legacy_login(version=None, module=None, core_class=None):
@@ -52,21 +67,38 @@ def install_legacy_login(version=None, module=None, core_class=None):
         if not match:
             raise WeChatLoginError("微信未返回登录确认地址，请重新扫码")
         redirect = match.group(1)
-        parsed = urlsplit(redirect)
-        if (parsed.scheme != "https" or parsed.username or parsed.password or
-                not re.fullmatch(r"wx\d*\.qq\.com|web\d*\.wechat\.com", parsed.hostname or "") or
-                not parsed.path.startswith("/cgi-bin/mmwebwx-bin/")):
-            raise WeChatLoginError("微信返回了不受支持的登录确认地址")
         headers = {"User-Agent": core.user_agent,
                    "client-version": getattr(config, "UOS_PATCH_CLIENT_VERSION", CLIENT_VERSION),
                    "extspam": getattr(config, "UOS_PATCH_EXTSPAM", EXTSPAM),
                    "referer": "https://wx.qq.com/?&lang=zh_CN&target=t"}
-        try:
-            response = core.s.get(redirect, headers=headers, allow_redirects=False, timeout=(10, 60))
-        except Exception as exc:
-            raise WeChatLoginError("微信登录确认请求失败（" + type(exc).__name__ + "），请检查服务器网络") from None
-        if response.status_code != 200:
-            raise WeChatLoginError("微信登录接口返回 HTTP " + str(response.status_code) + "，尚未完成认证")
+        seen = set()
+        for hop in range(4):
+            parsed = login_address(redirect)
+            if redirect in seen:
+                raise WeChatLoginError("微信登录接口出现重复跳转，请重新扫码")
+            seen.add(redirect)
+            try:
+                response = core.s.get(redirect, headers=headers, allow_redirects=False, timeout=(10, 60))
+            except Exception as exc:
+                raise WeChatLoginError("微信登录确认请求失败（" + type(exc).__name__ + "），请检查服务器网络") from None
+            if response.status_code == 200:
+                break
+            if response.status_code not in (301, 302, 303, 307, 308):
+                raise WeChatLoginError("微信登录接口返回 HTTP " + str(response.status_code) + "，尚未完成认证")
+            # WeChat may return authentication XML directly with a 3xx status.
+            # Consume that result before considering Location, as upstream does.
+            try:
+                candidate = ET.fromstring(response.text)
+            except ET.ParseError:
+                candidate = None
+            if candidate is not None and candidate.tag == "error":
+                break
+            location = response.headers.get("Location", "")
+            if not location:
+                raise WeChatLoginError("微信登录接口返回 HTTP " + str(response.status_code) + "，但未提供跳转目标或有效认证结果")
+            if hop == 3:
+                raise WeChatLoginError("微信登录接口跳转次数过多，请重新扫码")
+            redirect = urljoin(redirect, location)
         text = response.text.lstrip("\ufeff \r\n\t")
         if text.lower().startswith(("<!doctype html", "<html")):
             raise WeChatLoginError("微信登录返回 HTML 网页而非认证结果，可能是网页版登录限制或接口兼容问题；请确认账号能登录微信网页版")
