@@ -1,0 +1,19 @@
+[Unit]
+Description=EFB local manager
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Replace all YOUR_USER / PATH_TO_VENV values before installation.
+User=YOUR_USER
+WorkingDirectory=/home/YOUR_USER
+ExecStart=/PATH_TO_VENV/bin/efb-manager --profile default --port 8765
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=25
+KillMode=control-group
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,88 @@
+import http.client
+import json
+import os
+from pathlib import Path
+import socket
+import subprocess
+import sys
+import tempfile
+import time
+import unittest
+from urllib.parse import urlencode
+
+from efb_manager.history import History
+from test_history import message
+from efb_manager.history import capture
+
+
+class HTTPTests(unittest.TestCase):
+    def test_auth_origin_and_state(self):
+        with socket.socket() as sock:
+            sock.bind(('127.0.0.1', 0))
+            port = sock.getsockname()[1]
+        with tempfile.TemporaryDirectory(dir=os.environ.get('EFB_MANAGER_TEST_TMP')) as tmp:
+            archive = History(Path(tmp) / 'messages.sqlite3')
+            archive.save(capture(message(body='HTTP 测试文字'), 'default'))
+            archive.save(capture(message('Image', body='不保存的图片说明', uid='image'), 'default'))
+            child = subprocess.Popen([sys.executable, '-m', 'efb_manager.server',
+                                      '--port', str(port), '--state-dir', tmp],
+                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            try:
+                for _ in range(100):
+                    try:
+                        conn = http.client.HTTPConnection('127.0.0.1', port, timeout=2)
+                        conn.request('GET', '/api/state')
+                        response = conn.getresponse()
+                        self.assertEqual(response.status, 401)
+                        response.read()
+                        conn.close()
+                        break
+                    except OSError:
+                        if child.poll() is not None:
+                            self.fail(child.stderr.read().decode())
+                        time.sleep(.05)
+                else:
+                    self.fail('server did not start')
+                token = (Path(tmp) / 'access-token').read_text()
+                def request(method, path, body=None, cookie=None, origin=True, host=None):
+                    connection = http.client.HTTPConnection('127.0.0.1', port, timeout=3)
+                    headers = {'Content-Type': 'application/json'}
+                    if origin:
+                        headers['Origin'] = f'http://127.0.0.1:{port}'
+                    if cookie:
+                        headers['Cookie'] = cookie
+                    if host:
+                        headers['Host'] = host
+                    connection.request(method, path, json.dumps(body) if body is not None else None, headers)
+                    result = connection.getresponse()
+                    status, set_cookie, data = result.status, result.getheader('Set-Cookie'), result.read()
+                    connection.close()
+                    return status, set_cookie, data
+                self.assertEqual(request('POST', '/api/session', {'token': token}, origin=False)[0], 403)
+                self.assertEqual(request('POST', '/api/session', {'token': 'wrong'})[0], 401)
+                status, cookie, _ = request('POST', '/api/session', {'token': token})
+                self.assertEqual(status, 200)
+                self.assertIn('HttpOnly', cookie)
+                status, _, data = request('GET', '/api/state', cookie=cookie)
+                self.assertEqual(status, 200)
+                self.assertEqual(json.loads(data)['process'], 'stopped')
+                self.assertEqual(json.loads(data)['archive']['messages'], 2)
+                self.assertEqual(request('GET', '/api/messages?chat=abc')[0], 401)
+                status, _, data = request('GET', '/api/conversations', cookie=cookie)
+                key = json.loads(data)['items'][0]['key']
+                self.assertEqual(status, 200)
+                status, _, data = request('GET', '/api/messages?' + urlencode({'chat': key}), cookie=cookie)
+                self.assertEqual(status, 200)
+                self.assertEqual([m['body'] for m in json.loads(data)['items']], ['HTTP 测试文字', '[图片]'])
+                status, _, data = request('GET', '/api/messages?' + urlencode({'chat': key, 'q': '图片'}), cookie=cookie)
+                self.assertEqual(json.loads(data)['items'], [])
+                self.assertEqual(request('GET', '/api/messages?chat=invalid', cookie=cookie)[0], 400)
+                self.assertEqual(request('GET', '/api/state', cookie=cookie, host='evil.example')[0], 403)
+                self.assertEqual(request('POST', '/api/login', {}, cookie=cookie)[0], 409)
+                self.assertEqual(request('POST', '/api/stop', {}, cookie=cookie)[0], 200)
+                status, _, html = request('GET', '/')
+                self.assertEqual(status, 200)
+                self.assertIn('扫码登录'.encode(), html)
+            finally:
+                child.terminate()
+                child.communicate(timeout=20)

@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=65"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "efb-local-manager"
+version = "0.2.0"
+description = "Linux EFB and official WeChat channel manager"
+requires-python = ">=3.9"
+dependencies = ["PyQRCode>=1.2.1"]
+
+[project.scripts]
+efb-manager = "efb_manager.server:main"
+
+[tool.setuptools.package-data]
+efb_manager = ["*.html"]
+
+[tool.setuptools.packages.find]
+include = ["efb_manager*"]
