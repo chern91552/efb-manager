@@ -1,4 +1,4 @@
-# EFB Manager（Linux，v0.3.1）
+# EFB Manager（Linux，v0.3.2）
 
 独立运行的本机 Web 管理器，接管一个官方 `efb-wechat-slave` 实例。
 
@@ -135,6 +135,12 @@ sudo journalctl -u efb-manager -n 50
 - 使用安装时找到的 `ehforwarderbot` console entry point，保留 profile 参数；在子进程中适配官方 WeChatChannel 的认证、二维码和退出回调，不改动 site-packages 源文件。未来上游接口变化需要重新验证。
 - 当前只支持一个微信实例。中间件管理、配置编辑、自动恢复和累计历史时长未包含在本版。
 - 若手机本身无法登录微信网页版，管理器不能改变该限制。
+
+## EWS 2.0.7 登录兼容
+
+v0.3.2 对未包含新 UOS 请求头的官方微信从端 2.0.7，在管理器子进程内适配桌面二维码参数和登录请求头，并检查认证结果。不会修改系统安装文件。微信返回 HTML、错误码或缺少凭据时显示明确错误，不会把它当作登录成功。账号能否登录仍由微信决定；尚未完成真实账号扫码验收。
+
+已有源码部署可在项目目录执行 `git pull --ff-only`，随后执行 `systemctl restart efb-manager.service`，再在页面启动 EFB、登录微信。
 
 ## 本地验证
 

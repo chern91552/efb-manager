@@ -228,6 +228,22 @@ sudo systemctl restart efb-manager
 | 没有旧消息 | 只归档接入后经过 EFB 的消息，不导入手机微信已有历史 |
 | 停止 EFB 后仍有历史记录 | 这是正常行为，记录在独立消息数据库内 |
 
+### EWS 2.0.7 出现 XML 解析错误
+
+如果扫码后出现 `ExpatError: mismatched tag`，它表示登录响应无法按预期的 XML 解析；仅凭这个错误不能确认账号被限制。v0.3.2 会在管理器启动的子进程中，为未包含新 UOS 请求头的 2.0.7 适配官方源码所用的桌面二维码参数和请求头，并校验认证结果。
+
+源码部署更新：
+
+```bash
+cd /root/efb-manager  # 替换为实际项目目录
+git pull --ff-only
+sudo systemctl restart efb-manager.service
+```
+
+然后刷新页面，点击“启动 EFB”和“登录微信”。日志应出现“已启用 EWS 2.0.7 旧版登录兼容”。若仍失败，查看新的错误提示；返回 HTML 或账号被微信拒绝时，不会标记为已登录。此适配不修改 site-packages，不删除已有登录缓存或消息记录，也不保证账号一定可登录。其他版本或已有 UOS 请求头的自定义补丁不覆盖。真实扫码结果仍需部署后确认。
+
+实现参考[官方登录源码](https://github.com/ehForwarderBot/efb-wechat-slave/blob/master/efb_wechat_slave/vendor/itchat/components/login.py)，不需要另装独立的 itchat 包来替换从端内置版本。
+
 ## 验证范围
 
 当前已通过本地模拟从端、HTTP 接口和浏览器验证，尚未完成真实 Linux 微信账号扫码及微信 / Telegram 实机收发验收。详细测试范围见 [VERIFICATION.md](../VERIFICATION.md)。
