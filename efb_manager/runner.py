@@ -135,9 +135,11 @@ def main():
         os.setsid()
     try:
         from efb_wechat_slave import WeChatChannel
-        from .wechat_compat import install_legacy_login
-        if install_legacy_login():
+        from .wechat_compat import configure_legacy_login
+        if configure_legacy_login():
             print("已启用 EWS 2.0.7 旧版登录兼容：UOS 请求参数及认证结果检查。", flush=True)
+        else:
+            print("使用已安装微信从端的原始登录协议。", flush=True)
         from ehforwarderbot import coordinator
         from .history import History, install_recorder
         archive = os.environ.get("EFB_MANAGER_DB")

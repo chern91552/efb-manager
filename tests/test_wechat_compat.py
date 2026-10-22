@@ -1,8 +1,8 @@
 from types import SimpleNamespace as NS
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
-from efb_manager.wechat_compat import install_legacy_login, WeChatLoginError
+from efb_manager.wechat_compat import configure_legacy_login, install_legacy_login, WeChatLoginError
 
 
 def legacy_process(core, content):
@@ -15,6 +15,20 @@ def patched_process(core, content):
 
 REDIRECT = 'window.redirect_uri="https://wx2.qq.com/cgi-bin/mmwebwx-bin/webwxnewloginpage?ticket=PRIVATE-TICKET";'
 SUCCESS = '<error><ret>0</ret><skey>fake&amp;key</skey><wxsid>fake-sid</wxsid><wxuin>123</wxuin><pass_ticket>fake-ticket</pass_ticket></error>'
+
+
+class ProtocolSelectionTests(unittest.TestCase):
+    def test_default_does_not_import_or_rewrite_installed_protocol(self):
+        with patch('efb_manager.wechat_compat.install_legacy_login') as install:
+            for settings in ({}, {'EFB_MANAGER_LEGACY_UOS': '0'},
+                             {'EFB_MANAGER_LEGACY_UOS': 'true'}):
+                self.assertFalse(configure_legacy_login(settings))
+            install.assert_not_called()
+
+    def test_adapter_requires_explicit_opt_in(self):
+        with patch('efb_manager.wechat_compat.install_legacy_login', return_value=True) as install:
+            self.assertTrue(configure_legacy_login({'EFB_MANAGER_LEGACY_UOS': '1'}))
+            install.assert_called_once_with()
 
 
 class CompatibilityTests(unittest.TestCase):

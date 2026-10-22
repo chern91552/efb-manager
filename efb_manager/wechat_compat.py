@@ -8,6 +8,7 @@ This adapter requires a genuine successful WeChat authentication response.
 import importlib
 import importlib.metadata
 import inspect
+import os
 import re
 import secrets
 import time
@@ -19,6 +20,14 @@ from .uos_constants import CLIENT_VERSION, EXTSPAM
 
 class WeChatLoginError(RuntimeError):
     pass
+
+
+def configure_legacy_login(environ=None):
+    """Preserve the installed protocol unless explicitly opted into the adapter."""
+    environ = os.environ if environ is None else environ
+    if environ.get("EFB_MANAGER_LEGACY_UOS") != "1":
+        return False
+    return install_legacy_login()
 
 
 def login_address(url):
