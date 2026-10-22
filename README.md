@@ -1,4 +1,4 @@
-# EFB Manager（Linux，v0.3.0）
+# EFB Manager（Linux，v0.3.1）
 
 独立运行的本机 Web 管理器，接管一个官方 `efb-wechat-slave` 实例。
 
@@ -34,7 +34,9 @@ cat ~/.local/state/efb-manager/access-token
 ssh -N -L 8765:127.0.0.1:8765 YOUR_USER@YOUR_SERVER
 ```
 
-无需开放服务器的 8765 公网端口。首次启动管理器不会自动启动 EFB 或登录微信。
+使用 SSH 转发无需开放服务器的 8765 公网端口。首次启动管理器不会自动启动 EFB 或登录微信。
+
+如果希望直接通过服务器 IP 访问，启动命令加上 `--host 0.0.0.0`，例如 `python3 -m efb_manager.server --host 0.0.0.0 --port 8765`，然后访问 `http://服务器IP:8765`。同时需要在服务器防火墙及云平台入站规则中允许 TCP 8765。管理口令验证仍然启用；公网长期使用建议通过 HTTPS 访问。
 
 **[完整部署指南：环境检查、systemd 开机启动、数据备份、升级回退与常见问题](deploy/README.zh-CN.md)**
 
@@ -110,7 +112,7 @@ cat ~/.local/state/efb-manager/access-token
 ssh -L 8765:127.0.0.1:8765 YOUR_USER@YOUR_SERVER
 ```
 
-然后在电脑浏览器打开 `http://127.0.0.1:8765`。默认仅绑定回环地址，未提供公网监听或反向代理部署支持。日志可能含聊天内容，请只在自己的设备访问。
+然后在电脑浏览器打开 `http://127.0.0.1:8765`。默认绑定回环地址；可使用 `--host 0.0.0.0` 启用服务器 IP 直连。日志可能含聊天内容，请只在自己的设备访问。
 
 ## 开机运行
 

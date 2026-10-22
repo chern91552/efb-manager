@@ -12,6 +12,7 @@ WorkingDirectory=/home/YOUR_USER/efb-manager
 ExecStart=/usr/bin/python3 -m efb_manager.server --profile default --port 8765
 # If set for the original EFB, copy the SAME EFB_DATA_PATH and proxy values.
 # Environment=EFB_DATA_PATH=/home/YOUR_USER/.ehforwarderbot
+# To access via server IP, append --host 0.0.0.0 to ExecStart above.
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=25

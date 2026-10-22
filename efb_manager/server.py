@@ -1,5 +1,6 @@
 import argparse
 import getpass
+import ipaddress
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
@@ -14,10 +15,27 @@ from .history import History
 from .access import Access, write_password
 
 
+def host_allowed(value, bind_host, port, extra=()):
+    try:
+        parsed = urlsplit("//" + value)
+        if parsed.username or parsed.password or parsed.path or parsed.query or parsed.fragment:
+            return False
+        if (parsed.port or 80) != port:
+            return False
+        name = parsed.hostname
+        if name in {"localhost", "127.0.0.1", bind_host, *extra}:
+            return True
+        return bind_host == "0.0.0.0" and ipaddress.ip_address(name).version == 4
+    except (ValueError, TypeError):
+        return False
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--profile", default="default")
     parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument("--host", default="127.0.0.1", help="监听地址；服务器 IP 直连可用 0.0.0.0")
+    parser.add_argument("--allowed-host", action="append", default=[], help="额外允许访问的域名，不带协议和端口，可重复设置")
     parser.add_argument("--state-dir", type=Path, default=Path.home() / ".local/state/efb-manager")
     parser.add_argument("--set-password", action="store_true", help="交互设置管理口令后退出；运行中的服务需重启生效")
     args = parser.parse_args()
@@ -85,7 +103,7 @@ def main():
                 return False
 
         def valid_host(self):
-            return self.headers.get("Host") in (f"127.0.0.1:{args.port}", f"localhost:{args.port}")
+            return host_allowed(self.headers.get("Host", ""), args.host, args.port, args.allowed_host)
 
         def do_GET(self):
             if not self.valid_host():
@@ -178,13 +196,13 @@ def main():
             finally:
                 actions_lock.release()
 
-    server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
+    server = ThreadingHTTPServer((args.host, args.port), Handler)
     server.daemon_threads = True
     def shutdown(*_):
         threading.Thread(target=server.shutdown, daemon=True).start()
     signal.signal(signal.SIGTERM, shutdown)
     signal.signal(signal.SIGINT, shutdown)
-    print(f"管理界面：http://127.0.0.1:{args.port}\n管理口令文件：{token_file}", flush=True)
+    print(f"监听地址：{args.host}:{args.port}\n管理口令文件：{token_file}", flush=True)
     try:
         server.serve_forever()
     finally:

@@ -12,6 +12,7 @@ ExecStart=/PATH_TO_VENV/bin/efb-manager --profile default --port 8765
 # If the original EFB service used EFB_DATA_PATH, use that SAME value here:
 # Environment=EFB_DATA_PATH=/home/YOUR_USER/.ehforwarderbot
 # Copy proxy environment settings from the original EFB service if needed.
+# To access via server IP, append --host 0.0.0.0 to ExecStart above.
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=25

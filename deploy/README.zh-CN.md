@@ -107,7 +107,7 @@ sudo systemctl restart efb-manager
 
 ### 远程服务器或 NAS
 
-管理器固定监听 Linux 主机的 `127.0.0.1`，直接访问 `http://服务器IP:8765` 不可用。在你自己的电脑上执行：
+默认监听 Linux 主机的 `127.0.0.1`，此模式通过 SSH 转发访问。在你自己的电脑上执行：
 
 ```bash
 ssh -N -L 8765:127.0.0.1:8765 YOUR_USER@YOUR_SERVER
@@ -115,7 +115,28 @@ ssh -N -L 8765:127.0.0.1:8765 YOUR_USER@YOUR_SERVER
 
 保持 SSH 会话连接，然后在电脑浏览器打开 [http://127.0.0.1:8765](http://127.0.0.1:8765)。`YOUR_USER`、`YOUR_SERVER` 分别替换为服务器的 SSH 用户和地址。口令仍在服务器端读取。不要把访问口令放在网址里。
 
-当前版本不提供公网监听或反向代理配置，不需要开放 8765 公网端口。
+### 直接通过服务器 IP 访问
+
+在启动命令中增加监听参数：
+
+```bash
+/usr/bin/python3 -m efb_manager.server --host 0.0.0.0 --profile default --port 8765
+```
+
+替换为实际 Python 路径。浏览器访问 `http://服务器IP:8765`，仍需输入管理口令；不需要 SSH 转发。服务器防火墙和云平台入站规则需要允许 TCP 8765，建议将来源限定为你自己的 IP。公网长期使用建议使用 HTTPS。
+
+如果已使用 systemd，在现有 `ExecStart=` 行末尾增加 `--host 0.0.0.0`，保留原 Python 路径、profile 和其他参数：
+
+```bash
+sudo systemctl edit --full efb-manager.service
+sudo systemctl daemon-reload
+sudo systemctl restart efb-manager.service
+```
+
+不要在已有管理器服务之外再手动启动第二个实例。重启管理器后需要在页面重新启动 EFB 和登录微信。
+
+使用域名直接访问时，额外指定允许的域名，例如 `--allowed-host manager.example.com`（只填域名，不填协议或端口，可重复设置）。IP 直连无需此参数。当前服务直接提供 HTTP，不自动签发证书，不读取 `X-Forwarded-*` 来信任代理。
+
 
 ## 4. systemd 后台运行和开机启动
 
@@ -168,7 +189,9 @@ sudo journalctl -u efb-manager -f
 | 参数 / 文件 | 说明 |
 | --- | --- |
 | `--profile` | EFB profile 名称，默认 `default` |
-| `--port` | 本机监听端口，默认 `8765`；修改后 SSH 转发两端及浏览器地址应保持一致 |
+| `--host` | 默认 `127.0.0.1`；使用 `0.0.0.0` 可通过服务器 IPv4 地址访问 |
+| `--allowed-host` | 额外允许访问的域名，可重复设置；IP 直连不需要 |
+| `--port` | 监听端口，默认 `8765`；修改后 SSH 转发两端及浏览器地址应保持一致 |
 | `--state-dir` | 管理器数据目录，默认 `~/.local/state/efb-manager`，应由运行用户独占访问 |
 | `access-token` | 首次启动生成的管理口令 |
 | `messages.sqlite3` 及同名 WAL/SHM 文件 | 文字消息和非文字占位符归档 |
@@ -198,7 +221,7 @@ sudo systemctl restart efb-manager
 | 找不到 `efb-manager` | 源码模式无需此命令，在项目目录使用原 Python 执行 `-m efb_manager.server`；安装模式检查命令绝对路径 |
 | 找不到 EFB 或官方微信从端 | 用同一环境执行 `python -m pip show ...`，确认管理器和 EFB 安装位置一致 |
 | 找不到原配置、提示未启用通道 | 核对服务用户、HOME、`EFB_DATA_PATH` 和 `--profile` 与原 EFB 一致 |
-| 服务器 IP 无法打开页面 | 仅监听回环地址，请使用 SSH 转发；不要修改成公网绑定 |
+| 服务器 IP 无法打开页面 | 确认启动参数有 `--host 0.0.0.0`、服务已重启，且云平台与主机防火墙允许 TCP 8765；默认模式可用 SSH 转发 |
 | 口令无效 | 确认读取的是实际服务用户和实际 `--state-dir` 下的口令文件 |
 | 端口已被占用 | 停止同机重复管理器，或选择其他端口并同步修改 SSH 转发及访问地址 |
 | 二维码未出现 / 登录失败 | 先查看“运行日志”，确认 EFB 已启动、官方微信从端已配置，以及该账号可使用微信网页版 |
