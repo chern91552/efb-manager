@@ -83,6 +83,39 @@ class HTTPTests(unittest.TestCase):
                 status, _, html = request('GET', '/')
                 self.assertEqual(status, 200)
                 self.assertIn('扫码登录'.encode(), html)
+                status,_,data=request('GET','/api/archive-settings',cookie=cookie)
+                self.assertEqual(status,200)
+                self.assertFalse(json.loads(data)['record_public'])
+                policy=dict(record_private=True,record_group=False,record_public=False,max_mb=100)
+                self.assertEqual(request('POST','/api/archive-settings',policy)[0],401)
+                self.assertEqual(request('POST','/api/archive-settings',dict(policy,max_mb=0),cookie=cookie)[0],400)
+                self.assertEqual(request('POST','/api/archive-settings',policy,cookie=cookie)[0],200)
+                self.assertFalse(archive.save(capture(message(uid='disabled'),'default')))
+                policy['record_group']=True
+                self.assertEqual(request('POST','/api/archive-settings',policy,cookie=cookie)[0],200)
+                for n in range(30):
+                    archive.save(capture(message(body='A'*60000,uid='bulk-'+str(n)),'default'))
+                policy['max_mb']=1
+                self.assertEqual(request('POST','/api/archive-settings',policy,cookie=cookie)[0],200)
+                for _ in range(100):
+                    status,_,data=request('GET','/api/archive-settings',cookie=cookie)
+                    stored=json.loads(data)
+                    if stored['total_removed']>0 and stored['disk_bytes']<=1048576:
+                        break
+                    time.sleep(.1)
+                else:
+                    self.fail('Background cleanup did not reclaim disk space')
+                self.assertEqual(request('POST', '/api/password', {'current':token,'new':'custom-http-password'})[0], 401)
+                self.assertEqual(request('POST', '/api/password', {'current':'wrong','new':'custom-http-password'},cookie=cookie)[0], 400)
+                self.assertEqual(request('POST', '/api/password', {'current':token,'new':'short'},cookie=cookie)[0], 400)
+                self.assertEqual((Path(tmp)/'access-token').read_text(), token)
+                status,new_cookie,_=request('POST', '/api/password', {'current':token,'new':'custom-http-password'},cookie=cookie)
+                self.assertEqual(status, 200)
+                self.assertEqual(request('GET','/api/state',cookie=cookie)[0],401)
+                self.assertEqual(request('GET','/api/state',cookie=new_cookie)[0],200)
+                self.assertEqual(request('POST','/api/session',{'token':token})[0],401)
+                self.assertEqual(request('POST','/api/session',{'token':'custom-http-password'})[0],200)
+                self.assertEqual((Path(tmp)/'access-token').read_text(),'custom-http-password')
             finally:
                 child.terminate()
                 child.communicate(timeout=20)

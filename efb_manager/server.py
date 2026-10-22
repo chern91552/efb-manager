@@ -1,18 +1,17 @@
 import argparse
-import hashlib
-import hmac
+import getpass
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
 from pathlib import Path
-import secrets
 import signal
 import threading
 from urllib.parse import urlsplit, parse_qs
 
 from .service import Service
 from .history import History
+from .access import Access, write_password
 
 
 def main():
@@ -20,22 +19,40 @@ def main():
     parser.add_argument("--profile", default="default")
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--state-dir", type=Path, default=Path.home() / ".local/state/efb-manager")
+    parser.add_argument("--set-password", action="store_true", help="交互设置管理口令后退出；运行中的服务需重启生效")
     args = parser.parse_args()
     if os.name == "posix":
         os.umask(0o077)
     args.state_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     token_file = args.state_dir / "access-token"
-    if not token_file.exists():
-        fd = os.open(token_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        with os.fdopen(fd, "w") as f:
-            f.write(secrets.token_urlsafe(32))
-    token = token_file.read_text().strip()
-    if len(token) < 24:
-        raise RuntimeError("管理口令过短，请删除 access-token 后重新启动")
-    # Cookie value differs from the password and changes on each server start.
-    session = secrets.token_urlsafe(32)
+    if args.set_password:
+        value = getpass.getpass("新管理口令（8 到 256 个字符）：")
+        if value != getpass.getpass("再次输入新管理口令："):
+            parser.error("两次输入不一致，未修改管理口令")
+        try:
+            write_password(token_file, value)
+        except ValueError as exc:
+            parser.error(str(exc))
+        print("管理口令已保存。若管理器正在运行，请重启服务使其生效。")
+        return
+    access = Access(token_file)
     history = History(args.state_dir / "messages.sqlite3")
     service = Service(args.profile, history)
+    cleanup_stop = threading.Event()
+    cleanup_wake = threading.Event()
+    def cleanup():
+        while not cleanup_stop.is_set():
+            try:
+                history.enforce_limit()
+                with service.lock:
+                    service.state["cleanup_error"] = None
+            except Exception:
+                with service.lock:
+                    service.state["cleanup_error"] = "历史清理暂未完成，将自动重试，请检查磁盘空间和数据库权限"
+            cleanup_wake.wait(2)
+            cleanup_wake.clear()
+    cleaner = threading.Thread(target=cleanup, daemon=True)
+    cleaner.start()
     actions_lock = threading.Lock()
     login_lock = threading.Lock()
     login_attempts = []
@@ -63,7 +80,7 @@ def main():
             cookie = SimpleCookie()
             try:
                 cookie.load(self.headers.get("Cookie", ""))
-                return hmac.compare_digest(cookie["efb_session"].value, session)
+                return access.authorized(cookie["efb_session"].value)
             except (KeyError, ValueError):
                 return False
 
@@ -84,7 +101,9 @@ def main():
                     return params.get(name, [default])[0]
                 try:
                     if url.path == "/api/state":
-                        return self.send(200, {**service.snapshot(), "archive": history.stats(args.profile)})
+                        return self.send(200, {**service.snapshot(), "archive": history.stats(args.profile), "storage": history.settings()})
+                    if url.path == "/api/archive-settings":
+                        return self.send(200, history.settings())
                     if url.path == "/api/conversations":
                         return self.send(200, {"items": history.conversations(args.profile, param("q"))})
                     if url.path == "/api/messages":
@@ -108,7 +127,9 @@ def main():
                     raise ValueError("请求格式无效")
             except (ValueError, UnicodeError):
                 return self.send(400, {"error": "请求格式无效"})
-            if self.path == "/api/session":
+            if self.path in ("/api/session", "/api/password"):
+                if self.path == "/api/password" and not self.authorized():
+                    return self.send(401, {"error": "请先登录管理器"})
                 import time
                 with login_lock:
                     now = time.monotonic()
@@ -116,12 +137,29 @@ def main():
                     if len(login_attempts) >= 10:
                         return self.send(429, {"error": "尝试过于频繁，请稍后重试"})
                     login_attempts.append(now)
-                supplied = body.get("token", "")
-                if not isinstance(supplied, str) or not hmac.compare_digest(hashlib.sha256(supplied.encode()).digest(), hashlib.sha256(token.encode()).digest()):
-                    return self.send(401, {"error": "管理口令不正确"})
+                if self.path == "/api/password":
+                    try:
+                        session = access.change(body.get("current"), body.get("new"))
+                    except ValueError as exc:
+                        return self.send(400, {"error": str(exc)})
+                    except OSError:
+                        return self.send(503, {"error": "口令保存失败，请检查数据目录权限"})
+                else:
+                    session = access.login(body.get("token", ""))
+                    if not session:
+                        return self.send(401, {"error": "管理口令不正确"})
                 return self.send(200, {"ok": True}, cookie=f"efb_session={session}; HttpOnly; SameSite=Strict; Path=/")
             if not self.authorized():
                 return self.send(401, {"error": "请先登录管理器"})
+            if self.path == "/api/archive-settings":
+                try:
+                    settings = history.update_settings(body)
+                except ValueError as exc:
+                    return self.send(400, {"error": str(exc)})
+                except Exception:
+                    return self.send(503, {"error": "归档设置保存失败"})
+                cleanup_wake.set()
+                return self.send(200, settings)
             action = self.path.removeprefix("/api/")
             if action not in ("start", "stop", "restart", "login", "logout"):
                 return self.send(404, {"error": "不存在"})
@@ -150,6 +188,9 @@ def main():
     try:
         server.serve_forever()
     finally:
+        cleanup_stop.set()
+        cleanup_wake.set()
+        cleaner.join(timeout=5)
         service.stop()
         server.server_close()
 

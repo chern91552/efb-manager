@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import sqlite3
+import threading
 import time
 import uuid
 
@@ -20,6 +21,7 @@ PLACEHOLDERS = {
 class History:
     def __init__(self, path):
         self.path = Path(path)
+        self.maintenance_lock = threading.Lock()
         self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         with self.connect() as db:
             db.execute("PRAGMA journal_mode=WAL")
@@ -36,6 +38,18 @@ class History:
                 );
                 CREATE INDEX IF NOT EXISTS messages_chat
                     ON messages(profile, channel, chat_id, id DESC);
+                CREATE INDEX IF NOT EXISTS messages_oldest ON messages(captured_at, id);
+                CREATE TABLE IF NOT EXISTS archive_config (
+                    id INTEGER PRIMARY KEY CHECK(id=1),
+                    record_private INTEGER NOT NULL DEFAULT 1,
+                    record_group INTEGER NOT NULL DEFAULT 1,
+                    record_public INTEGER NOT NULL DEFAULT 0,
+                    max_mb INTEGER NOT NULL DEFAULT 100,
+                    total_removed INTEGER NOT NULL DEFAULT 0,
+                    last_removed INTEGER NOT NULL DEFAULT 0,
+                    cleaned_at REAL
+                );
+                INSERT OR IGNORE INTO archive_config(id) VALUES(1);
             """)
         if os.name == "posix":
             self.path.chmod(0o600)
@@ -55,6 +69,11 @@ class History:
         body = item["body"] if item["kind"] == "Text" else PLACEHOLDERS.get(item["kind"], "[其他消息]")
         values = {**item, "body": body}
         with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            policy = db.execute("SELECT * FROM archive_config WHERE id=1").fetchone()
+            key = {"Public": "record_public", "Group": "record_group"}.get(item["chat_type"], "record_private")
+            if not policy[key]:
+                return False
             db.execute("""INSERT INTO messages
                 (profile,channel,chat_id,chat_name,chat_type,sender,direction,kind,body,message_id,captured_at,delivery)
                 VALUES (:profile,:channel,:chat_id,:chat_name,:chat_type,:sender,:direction,:kind,:body,:message_id,:captured_at,:delivery)
@@ -62,6 +81,70 @@ class History:
                 chat_name=excluded.chat_name, sender=excluded.sender,
                 kind=excluded.kind, body=excluded.body, delivery=excluded.delivery
             """, values)
+        return True
+
+    def disk_bytes(self):
+        total = 0
+        for path in (self.path, Path(str(self.path) + "-wal"), Path(str(self.path) + "-shm")):
+            try:
+                total += path.stat().st_size
+            except FileNotFoundError:
+                pass
+        return total
+
+    def settings(self):
+        with self.connect() as db:
+            result = dict(db.execute("SELECT * FROM archive_config WHERE id=1").fetchone())
+        for key in ("record_private", "record_group", "record_public"):
+            result[key] = bool(result[key])
+        result.pop("id")
+        result["disk_bytes"] = self.disk_bytes()
+        return result
+
+    def update_settings(self, body):
+        flags = ("record_private", "record_group", "record_public")
+        if any(type(body.get(key)) is not bool for key in flags):
+            raise ValueError("归档开关必须为布尔值")
+        size = body.get("max_mb")
+        if type(size) is not int or not 1 <= size <= 10240:
+            raise ValueError("消息库上限需为 1 到 10240 MiB 的整数")
+        with self.connect() as db:
+            db.execute("UPDATE archive_config SET record_private=?,record_group=?,record_public=?,max_mb=? WHERE id=1",
+                       [int(body[k]) for k in flags] + [size])
+        return self.settings()
+
+    def enforce_limit(self):
+        """Periodically trim oldest records and physically compact SQLite files."""
+        with self.maintenance_lock:
+            limit = self.settings()["max_mb"] * 1024 * 1024
+            if self.disk_bytes() <= limit:
+                return 0
+            with self.connect() as db:
+                # Flush/truncate WAL first: temporary journal growth is not live history.
+                if db.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()[0]:
+                    return 0  # An active reader/writer will be retried next cycle.
+                if self.disk_bytes() <= limit:
+                    return 0
+                page_size = db.execute("PRAGMA page_size").fetchone()[0]
+                def live_bytes():
+                    return (db.execute("PRAGMA page_count").fetchone()[0] -
+                            db.execute("PRAGMA freelist_count").fetchone()[0]) * page_size
+                removed = 0
+                # Retain a margin so normal writes do not require constant compaction.
+                if live_bytes() > limit - 32768:
+                    while live_bytes() > int(limit * .85):
+                        count = db.execute("SELECT COUNT(*) FROM messages").fetchone()[0]
+                        if not count:
+                            break
+                        batch = max(1, count // 10)
+                        removed += db.execute("DELETE FROM messages WHERE id IN (SELECT id FROM messages ORDER BY captured_at,id LIMIT ?)", (batch,)).rowcount
+                        db.commit()
+                db.execute("UPDATE archive_config SET last_removed=?,total_removed=total_removed+?,cleaned_at=? WHERE id=1",
+                           (removed, removed, time.time()))
+                db.commit()
+                db.execute("VACUUM")
+                db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            return removed
 
     @staticmethod
     def key(channel, chat_id):
@@ -124,6 +207,12 @@ def capture(message, profile):
     author = getattr(message, "author", None)
     classes = {c.__name__ for c in type(chat).__mro__}
     chat_type = "Group" if "GroupChat" in classes else "Private" if "PrivateChat" in classes else "Unknown"
+    vendor = getattr(chat, "vendor_specific", {}) or {}
+    # Official EWS marks the self-only private chat as is_mp too. Keep it private.
+    self_chat = getattr(chat, "self", None)
+    other = getattr(chat, "other", None)
+    if vendor.get("is_mp") and not (self_chat is not None and other is self_chat):
+        chat_type = "Public"
     target = str(getattr(getattr(message, "deliver_to", None), "channel_id", ""))
     is_self = any(c.__name__ == "SelfChatMember" for c in type(author).__mro__)
     return dict(profile=profile, channel=channel, chat_id=str(chat.uid),
