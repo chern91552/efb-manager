@@ -1,0 +1,156 @@
+# Linux 部署指南
+
+适用于已经配置好 EFB + 官方微信从端的 Linux 主机。管理器提供浏览器界面，不包含微信客户端，也不会自动安装、初始化 EFB 或填写 Telegram 配置。
+
+## 1. 确认现有环境
+
+- Python 3.9 或以上；已安装且能够正常运行 `ehforwarderbot`、`efb-wechat-slave` 和 `efb-telegram-master`。
+- 使用原 EFB 的 Linux 用户和 Python 虚拟环境，不要用另一套 Python 或 `sudo pip` 安装管理器。
+- 沿用原 EFB 的 HOME、profile 与环境变量；默认 profile 为 `default`。如果原服务配置过 `EFB_DATA_PATH`，应保留原值。
+- 当前仅支持一个官方微信实例。管理器不能绕过微信网页版登录限制，也不能代替 EFB 本身的网络、代理和 Telegram 配置。
+
+激活现有虚拟环境后检查（路径仅为占位示例）：
+
+```bash
+source /path/to/efb-venv/bin/activate
+python --version
+command -v python
+command -v ehforwarderbot
+python -m pip show ehforwarderbot efb-wechat-slave efb-telegram-master
+```
+
+如果尚未安装 EFB，请先参考 [EFB 项目](https://github.com/ehForwarderBot/ehForwarderBot)、[Telegram 主端](https://github.com/ehForwarderBot/efb-telegram-master)和[官方微信从端](https://github.com/ehForwarderBot/efb-wechat-slave)完成安装及配置，确认原命令行链路可用后再接入管理器。
+
+## 2. 停止原实例，安装管理器
+
+先记录现有 EFB 版本、备份现有 profile，并使用原有方式停止 EFB（如果由 systemd 或其他守护程序管理，也应暂停原服务，避免自动拉起）。管理器只控制自己创建的子进程，无法接管已经在运行的 EFB。
+
+```bash
+source /path/to/efb-venv/bin/activate
+git clone https://github.com/chern91552/efb-manager.git
+cd efb-manager
+python -m pip install .
+```
+
+管理器只声明自身需要的 PyQRCode 依赖，不会主动安装 EFB。不要为了安装管理器直接升级现有 EFB 的全部依赖。
+
+## 3. 前台启动与扫码
+
+```bash
+efb-manager --profile default --port 8765
+```
+
+保持该终端运行。在同一 Linux 用户的另一个终端读取管理口令：
+
+```bash
+cat ~/.local/state/efb-manager/access-token
+```
+
+浏览器打开 [http://127.0.0.1:8765](http://127.0.0.1:8765)，输入口令。进入“微信管理”，依次点击“启动 EFB”和“登录微信”，用手机微信扫描弹窗中的二维码，并在手机上确认。
+
+首次启动从端时，EFB 可能在等待登录完成后才继续初始化其余组件。点击“退出微信”只结束 EFB 的微信会话，手机微信继续正常使用。主动退出后保持离线；再次登录需要手动点击。
+
+管理器退出时会停止自己启动的 EFB。使用 `Ctrl+C` 停止前台管理器后，再按下一节启用后台服务。
+
+### 远程服务器或 NAS
+
+管理器固定监听 Linux 主机的 `127.0.0.1`，直接访问 `http://服务器IP:8765` 不可用。在你自己的电脑上执行：
+
+```bash
+ssh -N -L 8765:127.0.0.1:8765 YOUR_USER@YOUR_SERVER
+```
+
+保持 SSH 会话连接，然后在电脑浏览器打开 [http://127.0.0.1:8765](http://127.0.0.1:8765)。`YOUR_USER`、`YOUR_SERVER` 分别替换为服务器的 SSH 用户和地址。口令仍在服务器端读取。不要把访问口令放在网址里。
+
+当前版本不提供公网监听或反向代理配置，不需要开放 8765 公网端口。
+
+## 4. systemd 后台运行和开机启动
+
+从项目目录复制模板，再编辑实际配置：
+
+```bash
+sudo cp deploy/efb-manager.service.example /etc/systemd/system/efb-manager.service
+sudoedit /etc/systemd/system/efb-manager.service
+```
+
+必须替换的字段：
+
+| 字段 | 填写方法 |
+| --- | --- |
+| `User=YOUR_USER` | 原 EFB 使用的 Linux 用户 |
+| `WorkingDirectory=/home/YOUR_USER` | 该用户实际 HOME，必须是存在的目录 |
+| `ExecStart=/PATH_TO_VENV/bin/efb-manager ...` | 原 EFB 虚拟环境中管理器可执行文件的绝对路径 |
+| `--profile default` | 沿用原 EFB profile；有自定义名称时修改 |
+
+systemd 不会执行 shell 的 `source activate`，因此 `ExecStart` 必须写完整路径。若原 EFB 服务有代理、`EFB_DATA_PATH` 等环境变量，请在 `[Service]` 中用 `Environment=` 按原值配置；模板内有注释示例。
+
+确认前台管理器与原 EFB 服务均已停止，然后执行：
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now efb-manager
+sudo systemctl status efb-manager --no-pager
+sudo journalctl -u efb-manager -n 50 --no-pager
+```
+
+此服务只自动启动管理器，EFB 和微信登录仍由页面手动启动。访问口令保存在服务用户 HOME 下的 `.local/state/efb-manager/access-token`，不是当前管理员或 root 的 HOME。
+
+日常管理：
+
+```bash
+sudo systemctl restart efb-manager
+sudo systemctl stop efb-manager
+sudo journalctl -u efb-manager -f
+```
+
+重启管理器也会停止其 EFB 子进程；重启后需在页面重新启动 EFB 和登录微信。
+
+## 5. 配置参数与数据
+
+```bash
+efb-manager --help
+efb-manager --profile default --port 8765 --state-dir /your/private/efb-manager-state
+```
+
+| 参数 / 文件 | 说明 |
+| --- | --- |
+| `--profile` | EFB profile 名称，默认 `default` |
+| `--port` | 本机监听端口，默认 `8765`；修改后 SSH 转发两端及浏览器地址应保持一致 |
+| `--state-dir` | 管理器数据目录，默认 `~/.local/state/efb-manager`，应由运行用户独占访问 |
+| `access-token` | 首次启动生成的管理口令 |
+| `messages.sqlite3` 及同名 WAL/SHM 文件 | 文字消息和非文字占位符归档 |
+
+管理器数据目录与 EFB profile 目录不同，需要分别备份。停止管理器后备份整个 state 目录，并另外备份原 EFB 的 profile。不要只复制运行中的 SQLite 主文件。
+
+消息库跨服务重启保留，登录计时与上次在线时长目前不跨管理器重启保存。换微信账号时，如需隔离历史，请使用不同 EFB profile。该版本不提供数据自动清理和完整历史导入。
+
+## 6. 更新与回退
+
+先停止管理器并备份数据。从原项目目录运行：
+
+```bash
+git rev-parse HEAD
+git pull --ff-only
+/path/to/efb-venv/bin/python -m pip install .
+sudo systemctl restart efb-manager
+```
+
+更新前记录旧 commit ID。需要回退时，在已停止管理器的情况下切回记录的提交，再使用同一虚拟环境重新安装，最后启动服务。不要删除 state 和 EFB profile；代码回退不代表数据库结构一定可以回退。
+
+## 7. 常见问题
+
+| 现象 | 检查方法 |
+| --- | --- |
+| 找不到 `efb-manager` | 确认激活了安装它的虚拟环境，或使用其绝对路径 |
+| 找不到 EFB 或官方微信从端 | 用同一环境执行 `python -m pip show ...`，确认管理器和 EFB 安装位置一致 |
+| 找不到原配置、提示未启用通道 | 核对服务用户、HOME、`EFB_DATA_PATH` 和 `--profile` 与原 EFB 一致 |
+| 服务器 IP 无法打开页面 | 仅监听回环地址，请使用 SSH 转发；不要修改成公网绑定 |
+| 口令无效 | 确认读取的是实际服务用户和实际 `--state-dir` 下的口令文件 |
+| 端口已被占用 | 停止同机重复管理器，或选择其他端口并同步修改 SSH 转发及访问地址 |
+| 二维码未出现 / 登录失败 | 先查看“运行日志”，确认 EFB 已启动、官方微信从端已配置，以及该账号可使用微信网页版 |
+| 没有旧消息 | 只归档接入后经过 EFB 的消息，不导入手机微信已有历史 |
+| 停止 EFB 后仍有历史记录 | 这是正常行为，记录在独立消息数据库内 |
+
+## 验证范围
+
+当前已通过本地模拟从端、HTTP 接口和浏览器验证，尚未完成真实 Linux 微信账号扫码及微信 / Telegram 实机收发验收。详细测试范围见 [VERIFICATION.md](../VERIFICATION.md)。

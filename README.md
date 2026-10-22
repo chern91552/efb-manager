@@ -6,6 +6,38 @@
 
 新增消息记录页：左侧会话列表，右侧按时间查看消息；支持会话名称搜索、文字正文搜索、消息类型筛选、自动更新和加载更早记录。查看更早记录时暂停自动更新，可点击“回到最新”恢复。桌面使用侧栏，手机窄屏改为上下布局。
 
+## 快速部署（已有 EFB 的 Linux 主机）
+
+前提：已有正常工作的 EFB、官方 `efb-wechat-slave` 和 Telegram 主端配置，Python 3.9+。管理器需与 EFB 使用同一个 Linux 用户、Python 虚拟环境和配置目录。**当前版本尚未完成真实 Linux 微信账号扫码与收发验收。**
+
+先停止原先运行的 EFB，避免同一个 profile 被两个进程同时使用。然后执行（把虚拟环境路径替换为你现有 EFB 的实际路径）：
+
+```bash
+source /path/to/efb-venv/bin/activate
+git clone https://github.com/chern91552/efb-manager.git
+cd efb-manager
+python -m pip install .
+efb-manager --profile default --port 8765
+```
+
+在同一台 Linux 主机的另一个终端读取管理口令：
+
+```bash
+cat ~/.local/state/efb-manager/access-token
+```
+
+本机浏览器打开 [http://127.0.0.1:8765](http://127.0.0.1:8765)，输入口令，进入“微信管理”，依次点击“启动 EFB”和“登录微信”，再使用手机微信扫码并确认。
+
+远程 Linux 服务器：在自己的电脑上执行 SSH 转发，保持该终端连接，再访问上面的本机地址：
+
+```bash
+ssh -N -L 8765:127.0.0.1:8765 YOUR_USER@YOUR_SERVER
+```
+
+无需开放服务器的 8765 公网端口。首次启动管理器不会自动启动 EFB 或登录微信。
+
+**[完整部署指南：环境检查、systemd 开机启动、数据备份、升级回退与常见问题](deploy/README.zh-CN.md)**
+
 ## 界面预览
 
 以下使用模拟会话与消息，不包含真实微信账号数据。
