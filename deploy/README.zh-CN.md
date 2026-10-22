@@ -240,7 +240,7 @@ git pull --ff-only
 sudo systemctl restart efb-manager.service
 ```
 
-然后刷新页面，点击“启动 EFB”和“登录微信”。日志应出现“已启用 EWS 2.0.7 旧版登录兼容”。若仍失败，查看新的错误提示；返回 HTML 或账号被微信拒绝时，不会标记为已登录。此适配不修改 site-packages，不删除已有登录缓存或消息记录，也不保证账号一定可登录。其他版本或已有 UOS 请求头的自定义补丁不覆盖。真实扫码结果仍需部署后确认。
+然后刷新页面，点击“启动 EFB”和“登录微信”。如果没有二维码、直接出现手机确认弹窗，可在 v0.3.3 使用“强制扫码登录”：先停止 EFB，再启动 EFB，然后点击“强制扫码登录”。该按钮跳过本次缓存会话恢复与快捷确认，不删除缓存文件，认证成功后仍正常保存新会话。日志应出现“已启用 EWS 2.0.7 旧版登录兼容”。若仍失败，查看新的错误提示；返回 HTML 或账号被微信拒绝时，不会标记为已登录。此适配不修改 site-packages，不删除已有登录缓存或消息记录，也不保证账号一定可登录。其他版本或已有 UOS 请求头的自定义补丁不覆盖。真实扫码结果仍需部署后确认。
 
 实现参考[官方登录源码](https://github.com/ehForwarderBot/efb-wechat-slave/blob/master/efb_wechat_slave/vendor/itchat/components/login.py)，不需要另装独立的 itchat 包来替换从端内置版本。
 

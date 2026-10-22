@@ -1,5 +1,6 @@
 """EFB child entrypoint. Adapts the installed official channel without editing it."""
 import base64
+from contextlib import nullcontext
 import importlib.metadata
 import io
 import json
@@ -7,6 +8,8 @@ import os
 import sys
 import threading
 import time
+
+from .qr_login import fresh_qr_login
 
 PREFIX = "EFB_MANAGER_EVENT:"
 _output_lock = threading.Lock()
@@ -25,6 +28,7 @@ class LoginController:
         self.busy = False
         self.ready = False
         self.online = False
+        self.force_qr = False
 
     def install(self, cls):
         original_auth = cls.authenticate
@@ -60,7 +64,10 @@ class LoginController:
                 controller.busy = True
             try:
                 emit("logging_in")
-                original_auth(channel, "manager_qr_code", first_start=first_start)
+                with fresh_qr_login() if controller.force_qr else nullcontext():
+                    if controller.force_qr:
+                        print("强制扫码登录：跳过缓存会话恢复和手机快捷确认，正在获取新二维码。", flush=True)
+                    original_auth(channel, "manager_qr_code", first_start=first_start)
                 if not channel.bot.alive:
                     raise RuntimeError("微信认证未成功")
                 with controller.lock:
@@ -71,6 +78,7 @@ class LoginController:
                 raise
             finally:
                 with controller.lock:
+                    controller.force_qr = False
                     controller.busy = False
 
         def logout_callback(channel):
@@ -93,9 +101,10 @@ class LoginController:
         with self.lock:
             if self.channel is None or not self.ready:
                 raise RuntimeError("微信从端尚未初始化")
-            if action == "login":
+            if action in ("login", "login_qr"):
                 if self.busy or self.online or self.gate.is_set():
                     raise RuntimeError("正在登录或已经在线")
+                self.force_qr = action == "login_qr"
                 if not hasattr(self.channel, "chats"):
                     self.busy = True
                     self.gate.set()

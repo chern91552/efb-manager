@@ -179,7 +179,7 @@ def main():
                 cleanup_wake.set()
                 return self.send(200, settings)
             action = self.path.removeprefix("/api/")
-            if action not in ("start", "stop", "restart", "login", "logout"):
+            if action not in ("start", "stop", "restart", "login", "login_qr", "logout"):
                 return self.send(404, {"error": "不存在"})
             if not actions_lock.acquire(blocking=False):
                 return self.send(409, {"error": "另一个操作尚未结束"})
@@ -188,7 +188,7 @@ def main():
                     service.stop()
                 if action in ("start", "restart"):
                     service.start()
-                if action in ("login", "logout"):
+                if action in ("login", "login_qr", "logout"):
                     service.command(action)
                 return self.send(200, {"ok": True})
             except (ValueError, OSError) as exc:
