@@ -5,19 +5,25 @@
 ## 1. 确认现有环境
 
 - Python 3.9 或以上；已安装且能够正常运行 `ehforwarderbot`、`efb-wechat-slave` 和 `efb-telegram-master`。
-- 使用原 EFB 的 Linux 用户和 Python 虚拟环境，不要用另一套 Python 或 `sudo pip` 安装管理器。
+- 使用原 EFB 的 Linux 用户和 Python 解释器。**虚拟环境不是必需条件**：原来是系统安装就继续使用原解释器，不需要迁移 EFB。
 - 沿用原 EFB 的 HOME、profile 与环境变量；默认 profile 为 `default`。如果原服务配置过 `EFB_DATA_PATH`，应保留原值。
 - 当前仅支持一个官方微信实例。管理器不能绕过微信网页版登录限制，也不能代替 EFB 本身的网络、代理和 Telegram 配置。
 
-激活现有虚拟环境后检查（路径仅为占位示例）：
+先确认 EFB 的启动脚本及其解释器：
 
 ```bash
-source /path/to/efb-venv/bin/activate
-python --version
-command -v python
 command -v ehforwarderbot
-python -m pip show ehforwarderbot efb-wechat-slave efb-telegram-master
+head -n 1 "$(command -v ehforwarderbot)"
 ```
+
+例如首行是 `#!/usr/bin/python3`，就使用 `/usr/bin/python3`；若是其他绝对路径，使用那个路径。如果首行通过 `/usr/bin/env python3` 启动，使用原 EFB 启动时的 PATH 解析出的 `python3`。如果原服务使用包装脚本，应核对原服务实际执行的 Python。以下以 `/usr/bin/python3` 为例，先检查环境：
+
+```bash
+/usr/bin/python3 --version
+/usr/bin/python3 -c "import ehforwarderbot, efb_wechat_slave, efb_telegram_master, pyqrcode; print('EFB environment OK')"
+```
+
+原来使用虚拟环境的用户可先激活原环境，继续沿用其中的 Python。若原 Python 低于 3.9，当前管理器不能直接使用该解释器；不要只换一套找不到原 EFB 的 Python 来启动。
 
 如果尚未安装 EFB，请先参考 [EFB 项目](https://github.com/ehForwarderBot/ehForwarderBot)、[Telegram 主端](https://github.com/ehForwarderBot/efb-telegram-master)和[官方微信从端](https://github.com/ehForwarderBot/efb-wechat-slave)完成安装及配置，确认原命令行链路可用后再接入管理器。
 
@@ -25,20 +31,39 @@ python -m pip show ehforwarderbot efb-wechat-slave efb-telegram-master
 
 先记录现有 EFB 版本、备份现有 profile，并使用原有方式停止 EFB（如果由 systemd 或其他守护程序管理，也应暂停原服务，避免自动拉起）。管理器只控制自己创建的子进程，无法接管已经在运行的 EFB。
 
+### 系统安装的 EFB：直接运行源码
+
+```bash
+git clone https://github.com/chern91552/efb-manager.git
+cd efb-manager
+/usr/bin/python3 -m efb_manager.server --profile default --port 8765
+```
+
+将 `/usr/bin/python3` 替换为上一节确认的实际解释器。必须在克隆得到的项目目录运行，并保留该目录；管理器及其 EFB 子进程会从这里加载代码。此方法不执行 `pip install`，不修改系统 Python 的安装包。
+
+### 原 EFB 已使用虚拟环境：可选安装方式
+
+也可以在原虚拟环境里运行上述源码命令，或安装为独立命令：
+
 ```bash
 source /path/to/efb-venv/bin/activate
 git clone https://github.com/chern91552/efb-manager.git
 cd efb-manager
 python -m pip install .
+efb-manager --profile default --port 8765
 ```
 
-管理器只声明自身需要的 PyQRCode 依赖，不会主动安装 EFB。不要为了安装管理器直接升级现有 EFB 的全部依赖。
+管理器只声明自身需要的 PyQRCode 依赖，不会主动安装 EFB。不要为了安装管理器直接升级现有 EFB 的全部依赖，也无需把原先系统安装的 EFB 搬进新虚拟环境。
 
 ## 3. 前台启动与扫码
 
+源码运行时，在项目目录执行（如果上一节已启动，不要重复启动）：
+
 ```bash
-efb-manager --profile default --port 8765
+/usr/bin/python3 -m efb_manager.server --profile default --port 8765
 ```
+
+如果使用了安装方式，则运行原环境中的 `efb-manager --profile default --port 8765`。
 
 保持该终端运行。在同一 Linux 用户的另一个终端读取管理口令：
 
@@ -66,10 +91,10 @@ ssh -N -L 8765:127.0.0.1:8765 YOUR_USER@YOUR_SERVER
 
 ## 4. systemd 后台运行和开机启动
 
-从项目目录复制模板，再编辑实际配置：
+源码运行时，从项目目录复制专用模板，再编辑实际配置：
 
 ```bash
-sudo cp deploy/efb-manager.service.example /etc/systemd/system/efb-manager.service
+sudo cp deploy/efb-manager-source.service.example /etc/systemd/system/efb-manager.service
 sudoedit /etc/systemd/system/efb-manager.service
 ```
 
@@ -78,11 +103,11 @@ sudoedit /etc/systemd/system/efb-manager.service
 | 字段 | 填写方法 |
 | --- | --- |
 | `User=YOUR_USER` | 原 EFB 使用的 Linux 用户 |
-| `WorkingDirectory=/home/YOUR_USER` | 该用户实际 HOME，必须是存在的目录 |
-| `ExecStart=/PATH_TO_VENV/bin/efb-manager ...` | 原 EFB 虚拟环境中管理器可执行文件的绝对路径 |
+| `WorkingDirectory=/home/YOUR_USER/efb-manager` | 实际克隆源码的绝对路径，源码模式必须从这里加载模块 |
+| `ExecStart=/usr/bin/python3 -m efb_manager.server ...` | 原 EFB 使用的 Python 解释器绝对路径；系统安装或虚拟环境均可 |
 | `--profile default` | 沿用原 EFB profile；有自定义名称时修改 |
 
-systemd 不会执行 shell 的 `source activate`，因此 `ExecStart` 必须写完整路径。若原 EFB 服务有代理、`EFB_DATA_PATH` 等环境变量，请在 `[Service]` 中用 `Environment=` 按原值配置；模板内有注释示例。
+若通过 pip 安装了管理器，也可以使用 `efb-manager.service.example` 模板，其 `ExecStart` 指向已安装的管理器命令。systemd 不会执行 shell 的 `source activate`，因此 `ExecStart` 必须写完整路径。若原 EFB 服务有代理、`EFB_DATA_PATH` 等环境变量，请在 `[Service]` 中用 `Environment=` 按原值配置；模板内有注释示例。
 
 确认前台管理器与原 EFB 服务均已停止，然后执行：
 
@@ -108,8 +133,8 @@ sudo journalctl -u efb-manager -f
 ## 5. 配置参数与数据
 
 ```bash
-efb-manager --help
-efb-manager --profile default --port 8765 --state-dir /your/private/efb-manager-state
+/usr/bin/python3 -m efb_manager.server --help
+/usr/bin/python3 -m efb_manager.server --profile default --port 8765 --state-dir /your/private/efb-manager-state
 ```
 
 | 参数 / 文件 | 说明 |
@@ -131,17 +156,18 @@ efb-manager --profile default --port 8765 --state-dir /your/private/efb-manager-
 ```bash
 git rev-parse HEAD
 git pull --ff-only
-/path/to/efb-venv/bin/python -m pip install .
 sudo systemctl restart efb-manager
 ```
 
-更新前记录旧 commit ID。需要回退时，在已停止管理器的情况下切回记录的提交，再使用同一虚拟环境重新安装，最后启动服务。不要删除 state 和 EFB profile；代码回退不代表数据库结构一定可以回退。
+以上适用于源码运行；如果采用 pip 安装方式，更新源码后还需要用原解释器执行 `python -m pip install .` 再重启。
+
+更新前记录旧 commit ID。需要回退时，在已停止管理器的情况下切回记录的提交，源码模式直接重启，安装模式使用原 Python 重新安装后启动服务。不要删除 state 和 EFB profile；代码回退不代表数据库结构一定可以回退。
 
 ## 7. 常见问题
 
 | 现象 | 检查方法 |
 | --- | --- |
-| 找不到 `efb-manager` | 确认激活了安装它的虚拟环境，或使用其绝对路径 |
+| 找不到 `efb-manager` | 源码模式无需此命令，在项目目录使用原 Python 执行 `-m efb_manager.server`；安装模式检查命令绝对路径 |
 | 找不到 EFB 或官方微信从端 | 用同一环境执行 `python -m pip show ...`，确认管理器和 EFB 安装位置一致 |
 | 找不到原配置、提示未启用通道 | 核对服务用户、HOME、`EFB_DATA_PATH` 和 `--profile` 与原 EFB 一致 |
 | 服务器 IP 无法打开页面 | 仅监听回环地址，请使用 SSH 转发；不要修改成公网绑定 |

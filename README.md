@@ -8,17 +8,17 @@
 
 ## 快速部署（已有 EFB 的 Linux 主机）
 
-前提：已有正常工作的 EFB、官方 `efb-wechat-slave` 和 Telegram 主端配置，Python 3.9+。管理器需与 EFB 使用同一个 Linux 用户、Python 虚拟环境和配置目录。**当前版本尚未完成真实 Linux 微信账号扫码与收发验收。**
+前提：已有正常工作的 EFB、官方 `efb-wechat-slave` 和 Telegram 主端配置，Python 3.9+。管理器需与 EFB 使用同一个 Linux 用户、Python 解释器和配置目录；虚拟环境不是必需条件。**当前版本尚未完成真实 Linux 微信账号扫码与收发验收。**
 
-先停止原先运行的 EFB，避免同一个 profile 被两个进程同时使用。然后执行（把虚拟环境路径替换为你现有 EFB 的实际路径）：
+先停止原先运行的 EFB，避免同一个 profile 被两个进程同时使用。如果原 EFB 是系统安装，可直接从源码运行，不需要新建虚拟环境，也不需要向系统 Python 安装管理器。以下 `python3` 必须指向原 EFB 使用的解释器（如有不同，请替换为其绝对路径）：
 
 ```bash
-source /path/to/efb-venv/bin/activate
 git clone https://github.com/chern91552/efb-manager.git
 cd efb-manager
-python -m pip install .
-efb-manager --profile default --port 8765
+python3 -m efb_manager.server --profile default --port 8765
 ```
+
+原 EFB 已使用虚拟环境时，也可以激活原环境后运行上述源码命令，或执行 `python -m pip install .` 安装管理器。不要为了管理器迁移现有 EFB。
 
 在同一台 Linux 主机的另一个终端读取管理口令：
 
@@ -62,13 +62,12 @@ ssh -N -L 8765:127.0.0.1:8765 YOUR_USER@YOUR_SERVER
 
 ## 安装到现有 EFB 环境
 
-必须使用已经能运行 EFB 的同一个 Python 虚拟环境、Linux 用户、HOME 和配置目录。管理器支持 Python 3.9+；不要为了管理器直接升级现有 EFB 的依赖。先记录版本并备份现有 profile。当前未在真实 Linux 微信账号上联调。
+必须使用已经能运行 EFB 的同一个 Python 解释器、Linux 用户、HOME 和配置目录。原来未使用虚拟环境时，无需创建虚拟环境。管理器支持 Python 3.9+；不要为了管理器直接升级现有 EFB 的依赖。先记录版本并备份现有 profile。当前未在真实 Linux 微信账号上联调。
 
-在解压后的项目目录运行（替换虚拟环境路径）：
+在解压后的项目目录可以直接运行源码（替换为原 EFB 解释器的实际路径）：
 
 ```bash
-/path/to/efb-venv/bin/python -m pip install .
-/path/to/efb-venv/bin/efb-manager --profile default
+/path/to/python3 -m efb_manager.server --profile default
 ```
 
 先停止原先运行的 EFB 进程或服务，避免两个实例同时操作同一个 profile。本管理器只控制自己启动的 EFB，不接管外部已运行进程。管理器启动后不自动启动 EFB，也不自动登录微信；在页面依次点击“启动 EFB”和“登录微信”。首次认证期间 EFB 可能尚未完成其他通道初始化。
@@ -91,7 +90,7 @@ ssh -L 8765:127.0.0.1:8765 YOUR_USER@YOUR_SERVER
 
 ## 开机运行
 
-编辑 `deploy/efb-manager.service.example` 的用户、工作目录和虚拟环境路径，按现有部署补充 `EFB_DATA_PATH` 等环境变量；然后保存为 `/etc/systemd/system/efb-manager.service`：
+源码运行时使用 `deploy/efb-manager-source.service.example`；已安装管理器时使用 `deploy/efb-manager.service.example`。编辑用户、工作目录和 Python 或管理器的绝对路径，按现有部署补充 `EFB_DATA_PATH` 等环境变量；然后保存为 `/etc/systemd/system/efb-manager.service`：
 
 ```bash
 sudo systemctl daemon-reload
