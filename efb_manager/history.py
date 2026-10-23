@@ -39,6 +39,10 @@ class History:
                 CREATE INDEX IF NOT EXISTS messages_chat
                     ON messages(profile, channel, chat_id, id DESC);
                 CREATE INDEX IF NOT EXISTS messages_oldest ON messages(captured_at, id);
+                CREATE TABLE IF NOT EXISTS archive_blacklist (
+                    profile TEXT NOT NULL, channel TEXT NOT NULL, chat_id TEXT NOT NULL,
+                    name TEXT NOT NULL, PRIMARY KEY(profile,channel,chat_id)
+                );
                 CREATE TABLE IF NOT EXISTS deleted_messages (
                     profile TEXT, channel TEXT, chat_id TEXT, direction TEXT, message_id TEXT,
                     PRIMARY KEY(profile,channel,chat_id,direction,message_id)
@@ -80,6 +84,8 @@ class History:
             db.execute("BEGIN IMMEDIATE")
             identity = tuple(item[k] for k in ('profile', 'channel', 'chat_id', 'direction', 'message_id'))
             if db.execute("SELECT 1 FROM deleted_messages WHERE profile=? AND channel=? AND chat_id=? AND direction=? AND message_id=?", identity).fetchone():
+                return False
+            if db.execute("SELECT 1 FROM archive_blacklist WHERE profile=? AND channel=? AND chat_id=?", identity[:3]).fetchone():
                 return False
             cleared = db.execute("SELECT cleared_at FROM cleared_chats WHERE profile=? AND channel=? AND chat_id=?", identity[:3]).fetchone()
             if cleared and item['captured_at'] <= cleared['cleared_at']:
@@ -229,6 +235,31 @@ class History:
                            [profile, channel, chat_id, time.time()])
             return db.execute("DELETE FROM messages WHERE " + where, params).rowcount
 
+    def blacklist(self, profile):
+        with self.connect() as db:
+            rows = db.execute("SELECT channel,chat_id,name FROM archive_blacklist WHERE profile=? ORDER BY name", (profile,)).fetchall()
+        return [dict(key=self.key(r['channel'], r['chat_id']), name=r['name']) for r in rows]
+
+    def set_blacklist(self, profile, key, blocked, name=''):
+        try:
+            decoded = json.loads(key)
+            if not isinstance(decoded, list) or len(decoded) != 2 or not all(isinstance(v, str) and v for v in decoded):
+                raise ValueError()
+            channel, chat_id = decoded
+            if channel.split('#')[0] != 'blueset.wechat':
+                raise ValueError()
+        except (TypeError, ValueError):
+            raise ValueError('微信会话标识无效') from None
+        if type(blocked) is not bool or not isinstance(name, str) or len(name) > 200:
+            raise ValueError('黑名单参数无效')
+        with self.connect() as db:
+            if blocked:
+                db.execute("INSERT INTO archive_blacklist VALUES (?,?,?,?) ON CONFLICT(profile,channel,chat_id) DO UPDATE SET name=excluded.name",
+                           (profile, channel, chat_id, name or chat_id))
+            else:
+                db.execute("DELETE FROM archive_blacklist WHERE profile=? AND channel=? AND chat_id=?", (profile, channel, chat_id))
+        return self.blacklist(profile)
+
     def stats(self, profile):
         with self.connect() as db:
             count = db.execute("SELECT COUNT(*) FROM messages WHERE profile=?", (profile,)).fetchone()[0]
@@ -296,7 +327,7 @@ def archive_error_detail(exc, stage):
     return '消息归档失败（' + stage + ' / ' + type(exc).__name__ + '）：' + detail
 
 
-def install_recorder(coordinator, history, profile, on_error, on_recovered=None):
+def install_recorder(coordinator, history, profile, on_error, on_recovered=None, on_health=None):
     original = coordinator.send_message
     state_lock = threading.Lock()
     failed = False
@@ -314,6 +345,8 @@ def install_recorder(coordinator, history, profile, on_error, on_recovered=None)
         except Exception as exc:
             report(exc, '写入数据库')
         else:
+            if on_health:
+                on_health('archive', 'ok' if saved else 'skipped')
             if saved:
                 with state_lock:
                     if failed:
@@ -329,6 +362,8 @@ def install_recorder(coordinator, history, profile, on_error, on_recovered=None)
         except Exception as exc:
             report(exc, '解析消息')
         if item:
+            if on_health and not (getattr(message, 'vendor_specific', None) or {}).get('_manager_synthetic') and str(getattr(getattr(message, 'deliver_to', None), 'channel_id', '')).split('#')[0] != 'blueset.wechat':
+                on_health('wechat', 'received')
             save(item)
         try:
             result = original(message)
@@ -338,7 +373,9 @@ def install_recorder(coordinator, history, profile, on_error, on_recovered=None)
                 save(item)
             raise
         if item:
-            item["delivery"] = "forwarded" if result is not None else "no_result"
+            item["delivery"] = ((getattr(result, "vendor_specific", None) or {}).get("_manager_delivery") or
+                                (getattr(message, "vendor_specific", None) or {}).get("_manager_delivery") or
+                                ("forwarded" if result is not None else "no_result"))
             save(item)
         return result
 

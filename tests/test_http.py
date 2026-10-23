@@ -97,6 +97,19 @@ class HTTPTests(unittest.TestCase):
                 self.assertEqual(status, 200)
                 self.assertIn('扫码登录'.encode(), html)
                 self.assertIn('data-action="login_qr"'.encode(), html)
+                block = {'chat': key, 'blocked': True, 'name': '测试黑名单'}
+                self.assertEqual(request('POST', '/api/archive-blacklist', block)[0], 401)
+                self.assertEqual(request('POST', '/api/archive-blacklist', block, cookie=cookie, origin=False)[0], 403)
+                self.assertEqual(request('POST', '/api/archive-blacklist', block, cookie=cookie)[0], 200)
+                status, _, data = request('GET', '/api/archive-blacklist', cookie=cookie)
+                self.assertEqual(json.loads(data)['items'][0]['key'], key)
+                status, _, data = request('GET', '/api/state', cookie=cookie)
+                self.assertIn('health', json.loads(data))
+                self.assertEqual(json.loads(data)['blacklist'][0]['key'], key)
+                block['blocked'] = False
+                self.assertEqual(request('POST', '/api/archive-blacklist', block, cookie=cookie)[0], 200)
+                self.assertEqual(request('POST', '/api/reminder_test', {})[0], 401)
+                self.assertEqual(request('POST', '/api/reminder_test', {}, cookie=cookie)[0], 409)
                 status, _, data = request('GET', '/api/messages?' + urlencode({'chat': key}), cookie=cookie)
                 record = json.loads(data)['items'][0]
                 deletion = {'scope': 'message', 'chat': key, 'id': record['id'], 'captured_at': record['captured_at']}

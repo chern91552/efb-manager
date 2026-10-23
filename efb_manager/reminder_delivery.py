@@ -56,7 +56,8 @@ class ReminderDelivery:
         if chat.self is None:
             raise RuntimeError('File helper has no self member')
         return Message(chat=chat, author=chat.self, type=MsgType.Text, text=text,
-                       uid=MessageID(json.dumps([[str(msg_id)]])), deliver_to=self.coordinator.master)
+                       uid=MessageID(json.dumps([[str(msg_id)]])), deliver_to=self.coordinator.master,
+                       vendor_specific={"_manager_synthetic": True})
 
     def forward(self, channel, sent, text):
         try:

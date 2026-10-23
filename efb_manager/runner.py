@@ -11,6 +11,7 @@ import time
 from .qr_login import fresh_qr_login, cached_login_then_wait
 from .reminder import LoginReminder, ReminderSettings
 from .reminder_delivery import ReminderDelivery, ReminderSyncError
+from .session_state import SessionState, fingerprint
 
 PREFIX = "EFB_MANAGER_EVENT:"
 _output_lock = threading.Lock()
@@ -33,6 +34,10 @@ class LoginController:
         self.force_qr = False
         self.reminder = LoginReminder()
         self.reminder_delivery = None
+        self.session_state = SessionState(os.environ["EFB_MANAGER_SESSION_STATE"]) if os.environ.get("EFB_MANAGER_SESSION_STATE") else None
+        self.reminder_settings = None
+        self.test_running = False
+        self.last_test = float("-inf")
 
     def install(self, cls):
         original_auth = cls.authenticate
@@ -65,7 +70,7 @@ class LoginController:
                 controller.busy = True
             try:
                 emit("logging_in")
-                with fresh_qr_login() if controller.force_qr else cached_login_then_wait(controller.wait_for_scan):
+                with fresh_qr_login() if controller.force_qr else cached_login_then_wait(controller.wait_for_scan) as authentication:
                     if controller.force_qr:
                         print("强制扫码登录：跳过缓存会话恢复和手机快捷确认，正在获取新二维码。", flush=True)
                     original_auth(channel, "manager_qr_code", first_start=first_start)
@@ -73,8 +78,8 @@ class LoginController:
                     raise RuntimeError("微信认证未成功")
                 with controller.lock:
                     controller.online = True
-                    controller.reminder.login(time.monotonic())
-                emit("online", at=time.time())
+                    started = controller.session_login(channel.bot, bool(authentication and authentication.get("restored")))
+                emit("online", at=started)
             except Exception as exc:
                 emit("login_error", error=type(exc).__name__ + ": " + str(exc))
                 raise
@@ -104,7 +109,18 @@ class LoginController:
         with self.lock:
             if self.channel is None or not self.ready:
                 raise RuntimeError("微信从端尚未初始化")
-            if action in ("login", "login_qr"):
+            if action == "reminder_test":
+                if not self.online or self.busy or self.test_running or not self.reminder_settings:
+                    raise RuntimeError("请等待微信上线后再测试提醒")
+                if not self.reminder_delivery or not hasattr(self.channel, 'chats') or getattr(self.reminder_delivery.coordinator, 'master', None) is None:
+                    raise RuntimeError("EFB 尚未完成初始化")
+                if time.monotonic() - self.last_test < 30:
+                    raise RuntimeError("测试提醒每 30 秒最多发送一次")
+                self.last_test = time.monotonic()
+                self.test_running = True
+                emit('reminder_test', status='running', message='正在发送测试提醒…')
+                threading.Thread(target=self.test_reminder, daemon=True, name='reminder-test').start()
+            elif action in ("login", "login_qr"):
                 if self.waiting_for_scan:
                     if action != "login_qr":
                         raise RuntimeError("缓存恢复失败，请点击扫码登录")
@@ -126,6 +142,38 @@ class LoginController:
                 emit("offline", at=time.time())
             else:
                 raise ValueError("未知命令")
+
+    def session_login(self, bot, restored):
+        now = time.time()
+        self.reminder.on_attempt = None
+        if self.session_state:
+            try:
+                value = self.session_state.login(fingerprint(bot), restored, now)
+                self.reminder.login(time.monotonic(), now - value['started_at'], value.get('attempted') is True)
+                self.reminder.on_attempt = self.session_state.mark_attempted
+                emit('session_state', origin_known=value.get('origin_known', False), error=None)
+                return value['started_at']
+            except Exception as exc:
+                emit('session_state', origin_known=False, error='登录计时保存失败（' + type(exc).__name__ + '），本次使用内存计时。')
+        self.reminder.login(time.monotonic())
+        return now
+
+    def test_reminder(self):
+        with self.lock:
+            try:
+                if not self.online or not self.channel.bot.alive:
+                    raise RuntimeError('微信已离线')
+                settings = self.reminder_settings.read()
+                elapsed = max(0, time.monotonic() - self.reminder.started) if self.reminder.started is not None else 0
+                self.reminder.send(self.channel.bot, settings, elapsed, self._forward_reminder, test=True)
+            except ReminderSyncError as exc:
+                emit('reminder_test', status='partial', message='测试提醒已发送至微信，同步 EFB 失败（' + str(exc) + '）。')
+            except Exception as exc:
+                emit('reminder_test', status='error', message='测试提醒发送失败或结果不确定（' + type(exc).__name__ + '），请检查文件传输助手。')
+            else:
+                emit('reminder_test', status='sent', message='测试提醒已发送，已提交 Telegram 转发与归档，请检查实际结果。')
+            finally:
+                self.test_running = False
 
     def wait_for_scan(self):
         with self.lock:
@@ -186,13 +234,24 @@ def main():
             install_recorder(coordinator, History(archive),
                              os.environ.get("EFB_MANAGER_PROFILE", "default"),
                              lambda detail: emit("archive_error", error=detail),
-                             lambda: emit("archive_recovered"))
+                             lambda: emit("archive_recovered"),
+                             lambda component, status: emit("health", component=component, status=status, at=time.time()))
+        from .health import install_wechat_health
+        install_wechat_health(emit)
+        try:
+            from telegram.utils.request import Request
+            from efb_telegram_master.slave_message import SlaveMessageProcessor
+            from .telegram_retry import TelegramRetry
+            TelegramRetry(emit).install(Request, SlaveMessageProcessor)
+        except ImportError:
+            emit('health', component='telegram', status='unsupported', error='当前 Telegram 主端版本不支持请求补偿适配')
         controller = LoginController()
         controller.reminder_delivery = ReminderDelivery(coordinator)
         controller.install(WeChatChannel)
         reminder_path = os.environ.get("EFB_MANAGER_REMINDER_SETTINGS")
         if reminder_path:
             settings = ReminderSettings(reminder_path)
+            controller.reminder_settings = settings
             def reminders():
                 settings_error = False
                 while True:

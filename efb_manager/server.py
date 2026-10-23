@@ -125,7 +125,9 @@ def main():
                     return params.get(name, [default])[0]
                 try:
                     if url.path == "/api/state":
-                        return self.send(200, {**service.snapshot(), "archive": history.stats(args.profile), "storage": history.settings(), "reminder": reminder.read()})
+                        return self.send(200, {**service.snapshot(), "archive": history.stats(args.profile), "storage": history.settings(), "reminder": reminder.read(), "blacklist": history.blacklist(args.profile)})
+                    if url.path == "/api/archive-blacklist":
+                        return self.send(200, {"items": history.blacklist(args.profile)})
                     if url.path == "/api/reminder-settings":
                         return self.send(200, reminder.read())
                     if url.path == "/api/archive-settings":
@@ -177,6 +179,14 @@ def main():
                 return self.send(200, {"ok": True}, cookie=f"efb_session={session}; HttpOnly; SameSite=Strict; Path=/")
             if not self.authorized():
                 return self.send(401, {"error": "请先登录管理器"})
+            if self.path == "/api/archive-blacklist":
+                try:
+                    items = history.set_blacklist(args.profile, body.get('chat'), body.get('blocked'), body.get('name', ''))
+                    return self.send(200, {'items': items})
+                except ValueError as exc:
+                    return self.send(400, {'error': str(exc)})
+                except Exception:
+                    return self.send(503, {'error': '会话黑名单保存失败'})
             if self.path == "/api/delete-records":
                 try:
                     scope = body.get("scope")
@@ -212,7 +222,7 @@ def main():
                 cleanup_wake.set()
                 return self.send(200, settings)
             action = self.path.removeprefix("/api/")
-            if action not in ("start", "stop", "restart", "login", "login_qr", "logout"):
+            if action not in ("start", "stop", "restart", "login", "login_qr", "logout", "reminder_test"):
                 return self.send(404, {"error": "不存在"})
             if not actions_lock.acquire(blocking=False):
                 return self.send(409, {"error": "另一个操作尚未结束"})
@@ -221,7 +231,7 @@ def main():
                     service.stop()
                 if action in ("start", "restart"):
                     service.start()
-                if action in ("login", "login_qr", "logout"):
+                if action in ("login", "login_qr", "logout", "reminder_test"):
                     service.command(action)
                 return self.send(200, {"ok": True})
             except (ValueError, OSError) as exc:

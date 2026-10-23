@@ -77,3 +77,38 @@ class ReminderTests(unittest.TestCase):
         for message in [None, 123, 'x'*501, 'bad\x00text']:
             with self.assertRaises(ValueError):
                 validate_settings({'enabled': True, 'hours': 24, 'message': message})
+
+    def test_test_reminder_does_not_consume_formal_attempt(self):
+        controller = LoginController()
+        bot = Mock(alive=True)
+        bot.file_helper.send.return_value = SimpleNamespace(id=123)
+        controller.channel = SimpleNamespace(bot=bot, chats=object())
+        controller.online = True
+        controller.reminder.login(0)
+        controller.reminder.on_attempt = Mock()
+        controller.reminder_settings = Mock()
+        controller.reminder_settings.read.return_value = {'enabled': False, 'hours': 696, 'message': '自定义内容'}
+        controller.reminder_delivery = Mock()
+        with patch('efb_manager.runner.emit') as emit:
+            controller.test_reminder()
+            self.assertEqual(emit.call_args.kwargs['status'], 'sent')
+        bot.file_helper.send.assert_called_once_with('【测试提醒】\n自定义内容')
+        controller.reminder_delivery.forward.assert_called_once()
+        self.assertFalse(controller.reminder.attempted)
+        controller.reminder.on_attempt.assert_not_called()
+
+    def test_test_command_requires_online_and_throttles(self):
+        controller = LoginController()
+        controller.channel = SimpleNamespace(bot=Mock(alive=True), chats=object())
+        controller.ready = True
+        controller.reminder_settings = Mock()
+        controller.reminder_delivery = Mock()
+        with self.assertRaises(RuntimeError):
+            controller.command('reminder_test')
+        controller.online = True
+        with patch('efb_manager.runner.threading.Thread') as thread, patch('efb_manager.runner.emit'):
+            controller.command('reminder_test')
+            thread.return_value.start.assert_called_once()
+            controller.test_running = False
+            with self.assertRaises(RuntimeError):
+                controller.command('reminder_test')

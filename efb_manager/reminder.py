@@ -49,10 +49,11 @@ class LoginReminder:
     def __init__(self):
         self.started = None
         self.attempted = False
+        self.on_attempt = None
 
-    def login(self, now):
-        self.started = now
-        self.attempted = False
+    def login(self, now, elapsed=0, attempted=False):
+        self.started = now - max(0, elapsed)
+        self.attempted = attempted
 
     def tick(self, bot, online, busy, settings, now, on_sent=None):
         if (not settings['enabled'] or not online or busy or self.started is None
@@ -63,13 +64,22 @@ class LoginReminder:
             return False
         # A timeout may follow successful delivery; never blindly send twice.
         self.attempted = True
+        if self.on_attempt:
+            self.on_attempt()
+        self.send(bot, settings, elapsed, on_sent)
+        return True
+
+    @staticmethod
+    def send(bot, settings, elapsed, on_sent=None, test=False):
         default_message = (
             '【EFB Manager 登录到期提醒】\n'
-            f'本次微信会话在线时长已达到设定的 {settings["hours"]:g} 小时'
+            f'当前微信会话已登录时长达到设定的 {settings["hours"]:g} 小时'
             f'（当前约 {elapsed / 3600:.2f} 小时）。\n'
             '请按需打开 EFB Manager 检查或重新登录。此提醒不代表微信已失效，不会自动退出。')
         message = settings.get('message', '')
         text = message if message.strip() else default_message
+        if test:
+            text = "【测试提醒】\n" + text
         sent = bot.file_helper.send(text)
         if on_sent is not None:
             on_sent(sent, text)

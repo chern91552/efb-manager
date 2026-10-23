@@ -26,10 +26,13 @@ def cached_login_then_wait(wait_for_scan, module=None, core_class=None):
     module = module or importlib.import_module('efb_wechat_slave.vendor.itchat.components.login')
     core_class = core_class or importlib.import_module('efb_wechat_slave.vendor.itchat.core').Core
     login, restore, push = core_class.login, core_class.load_login_status, module.push_login
+    result = {"restored": False}
 
     def restore_cached(core, *args, **kwargs):
         try:
-            return restore(core, *args, **kwargs)
+            value = restore(core, *args, **kwargs)
+            result["restored"] = bool(value)
+            return value
         except Exception as exc:
             print('缓存会话恢复失败（' + type(exc).__name__ + '），等待手动扫码。', flush=True)
             return False
@@ -42,7 +45,7 @@ def cached_login_then_wait(wait_for_scan, module=None, core_class=None):
         core_class.load_login_status = restore_cached
         core_class.login = login_after_click
         module.push_login = lambda core: False
-        yield
+        yield result
     finally:
         core_class.login = login
         core_class.load_login_status = restore
