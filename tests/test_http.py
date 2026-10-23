@@ -67,6 +67,17 @@ class HTTPTests(unittest.TestCase):
                 self.assertEqual(status, 200)
                 self.assertEqual(json.loads(data)['process'], 'stopped')
                 self.assertEqual(json.loads(data)['archive']['messages'], 2)
+                reminder_policy = {'enabled': True, 'hours': 23.5}
+                self.assertEqual(request('GET', '/api/reminder-settings')[0], 401)
+                self.assertEqual(request('POST', '/api/reminder-settings', reminder_policy)[0], 401)
+                self.assertEqual(request('POST', '/api/reminder-settings', reminder_policy, cookie=cookie, origin=False)[0], 403)
+                self.assertEqual(request('POST', '/api/reminder-settings', {'enabled': True, 'hours': 0}, cookie=cookie)[0], 400)
+                self.assertEqual(request('POST', '/api/reminder-settings', reminder_policy, cookie=cookie)[0], 200)
+                status, _, data = request('GET', '/api/reminder-settings', cookie=cookie)
+                self.assertEqual(status, 200)
+                self.assertEqual(json.loads(data), reminder_policy)
+                status, _, data = request('GET', '/api/state', cookie=cookie)
+                self.assertEqual(json.loads(data)['reminder'], reminder_policy)
                 self.assertEqual(request('GET', '/api/messages?chat=abc')[0], 401)
                 status, _, data = request('GET', '/api/conversations', cookie=cookie)
                 key = json.loads(data)['items'][0]['key']

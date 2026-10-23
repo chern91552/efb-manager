@@ -18,7 +18,8 @@ def redact(line):
 
 
 class Service:
-    def __init__(self, profile="default", history=None):
+    def __init__(self, profile="default", history=None, reminder_path=None):
+        self.reminder_path = reminder_path
         self.profile = profile
         self.history = history
         self.lock = threading.RLock()
@@ -47,9 +48,12 @@ class Service:
             elif kind == "qr":
                 self.state.update(wechat="waiting_scan", qr=event["image"], error=None)
             elif kind == "online":
-                self.state.update(wechat="online", logged_in_at=event["at"], qr=None, error=None)
+                self.state.update(wechat="online", logged_in_at=event["at"], qr=None, error=None, reminder_status=None)
             elif kind == "offline":
                 self._offline()
+            elif kind in ("reminder_sent", "reminder_error"):
+                self.logs.append(event["message"])
+                self.state["reminder_status"] = event["message"]
             elif kind == "archive_error":
                 self.state["archive_error"] = event["error"]
             elif kind in ("fatal", "command_error", "login_error"):
@@ -68,6 +72,8 @@ class Service:
                 raise ValueError("EFB 已在运行")
             self.state.update(process="starting", error=None, wechat="initializing", qr=None)
             env = dict(os.environ, PYTHONUNBUFFERED="1")
+            if self.reminder_path:
+                env["EFB_MANAGER_REMINDER_SETTINGS"] = str(self.reminder_path.resolve())
             if self.history:
                 env.update(EFB_MANAGER_DB=str(self.history.path.resolve()), EFB_MANAGER_PROFILE=self.profile)
             try:

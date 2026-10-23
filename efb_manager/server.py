@@ -1,5 +1,6 @@
 import argparse
 import getpass
+import hashlib
 import ipaddress
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -11,6 +12,7 @@ import threading
 from urllib.parse import urlsplit, parse_qs
 
 from .service import Service
+from .reminder import ReminderSettings
 from .history import History
 from .access import Access, write_password
 
@@ -55,7 +57,9 @@ def main():
         return
     access = Access(token_file)
     history = History(args.state_dir / "messages.sqlite3")
-    service = Service(args.profile, history)
+    reminder_path = args.state_dir / ("reminder-" + hashlib.sha256(args.profile.encode()).hexdigest()[:16] + ".json")
+    reminder = ReminderSettings(reminder_path)
+    service = Service(args.profile, history, reminder_path)
     cleanup_stop = threading.Event()
     cleanup_wake = threading.Event()
     def cleanup():
@@ -119,7 +123,9 @@ def main():
                     return params.get(name, [default])[0]
                 try:
                     if url.path == "/api/state":
-                        return self.send(200, {**service.snapshot(), "archive": history.stats(args.profile), "storage": history.settings()})
+                        return self.send(200, {**service.snapshot(), "archive": history.stats(args.profile), "storage": history.settings(), "reminder": reminder.read()})
+                    if url.path == "/api/reminder-settings":
+                        return self.send(200, reminder.read())
                     if url.path == "/api/archive-settings":
                         return self.send(200, history.settings())
                     if url.path == "/api/conversations":
@@ -169,6 +175,13 @@ def main():
                 return self.send(200, {"ok": True}, cookie=f"efb_session={session}; HttpOnly; SameSite=Strict; Path=/")
             if not self.authorized():
                 return self.send(401, {"error": "请先登录管理器"})
+            if self.path == "/api/reminder-settings":
+                try:
+                    return self.send(200, reminder.update(body))
+                except ValueError as exc:
+                    return self.send(400, {"error": str(exc)})
+                except OSError:
+                    return self.send(503, {"error": "提醒设置保存失败"})
             if self.path == "/api/archive-settings":
                 try:
                     settings = history.update_settings(body)

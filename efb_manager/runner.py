@@ -10,6 +10,7 @@ import threading
 import time
 
 from .qr_login import fresh_qr_login
+from .reminder import LoginReminder, ReminderSettings
 
 PREFIX = "EFB_MANAGER_EVENT:"
 _output_lock = threading.Lock()
@@ -29,6 +30,7 @@ class LoginController:
         self.ready = False
         self.online = False
         self.force_qr = False
+        self.reminder = LoginReminder()
 
     def install(self, cls):
         original_auth = cls.authenticate
@@ -72,6 +74,7 @@ class LoginController:
                     raise RuntimeError("微信认证未成功")
                 with controller.lock:
                     controller.online = True
+                    controller.reminder.login(time.monotonic())
                 emit("online", at=time.time())
             except Exception as exc:
                 emit("login_error", error=type(exc).__name__ + ": " + str(exc))
@@ -122,6 +125,20 @@ class LoginController:
             else:
                 raise ValueError("未知命令")
 
+    def check_reminder(self, settings):
+        with self.lock:
+            if self.channel is None or not self.online or self.busy:
+                return
+            try:
+                sent = self.reminder.tick(self.channel.bot, self.online, self.busy,
+                                          settings, time.monotonic())
+            except Exception as exc:
+                emit("reminder_error", message="登录到期提醒发送失败或结果不确定（" + type(exc).__name__ +
+                     "）；请检查文件传输助手。本次登录不自动重发，以免重复提醒。")
+            else:
+                if sent:
+                    emit("reminder_sent", message="登录到期提醒已发送至微信文件传输助手。")
+
     def _login(self):
         try:
             # Avoid upstream reauth()'s cache-file assumptions.
@@ -149,6 +166,24 @@ def main():
                              lambda: emit("archive_error", error="消息归档失败，请检查磁盘空间和数据库权限"))
         controller = LoginController()
         controller.install(WeChatChannel)
+        reminder_path = os.environ.get("EFB_MANAGER_REMINDER_SETTINGS")
+        if reminder_path:
+            settings = ReminderSettings(reminder_path)
+            def reminders():
+                settings_error = False
+                while True:
+                    time.sleep(5)
+                    try:
+                        policy = settings.read()
+                    except Exception:
+                        if not settings_error:
+                            emit("reminder_error", message="登录提醒设置读取失败，请在设置页重新保存。")
+                        settings_error = True
+                        continue
+                    settings_error = False
+                    controller.check_reminder(policy)
+            threading.Thread(target=reminders, daemon=True, name="login-reminder").start()
+
 
         def commands():
             for line in sys.stdin:
