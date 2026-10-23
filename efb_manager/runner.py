@@ -185,7 +185,8 @@ def main():
         if archive:
             install_recorder(coordinator, History(archive),
                              os.environ.get("EFB_MANAGER_PROFILE", "default"),
-                             lambda: emit("archive_error", error="消息归档失败，请检查磁盘空间和数据库权限"))
+                             lambda detail: emit("archive_error", error=detail),
+                             lambda: emit("archive_recovered"))
         controller = LoginController()
         controller.reminder_delivery = ReminderDelivery(coordinator)
         controller.install(WeChatChannel)

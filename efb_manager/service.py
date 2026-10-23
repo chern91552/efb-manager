@@ -55,7 +55,12 @@ class Service:
                 self.logs.append(event["message"])
                 self.state["reminder_status"] = event["message"]
             elif kind == "archive_error":
+                if self.state["archive_error"] != event["error"]:
+                    self.logs.append(event["error"])
                 self.state["archive_error"] = event["error"]
+            elif kind == "archive_recovered":
+                self.state["archive_error"] = None
+                self.logs.append("消息归档已恢复。")
             elif kind in ("fatal", "command_error", "login_error"):
                 self.state["error"] = redact(event.get("error", "操作失败"))
                 if kind != "command_error":

@@ -266,34 +266,80 @@ def capture(message, profile):
                 captured_at=time.time(), delivery="pending")
 
 
-def install_recorder(coordinator, history, profile, on_error):
+def archive_error_detail(exc, stage):
+    """Useful diagnostics without including message content or SQL parameters."""
+    detail = '未知原因'
+    if isinstance(exc, sqlite3.Error):
+        value = str(exc).lower()
+        if 'locked' in value or 'busy' in value:
+            detail = '数据库忙或被锁定，请检查是否有多个管理器使用同一数据目录'
+        elif 'readonly' in value or 'read-only' in value:
+            detail = '数据库只读，请检查服务用户与数据库及其目录权限'
+        elif 'no such table' in value or 'no such column' in value:
+            detail = '数据库结构不完整，请完整更新并重启管理器'
+        elif 'full' in value:
+            detail = '数据库或磁盘空间已满'
+        elif 'malformed' in value or 'not a database' in value:
+            detail = '数据库文件损坏或格式不正确'
+        elif 'unable to open' in value:
+            detail = '无法打开数据库，请检查数据目录路径和访问权限'
+        elif 'disk i/o' in value:
+            detail = '磁盘读写异常'
+        else:
+            detail = 'SQLite 写入异常'
+    elif isinstance(exc, PermissionError):
+        detail = '文件访问被拒绝，请检查服务用户和数据目录权限'
+    elif isinstance(exc, OSError):
+        detail = '文件系统读写异常'
+    elif stage == '解析消息':
+        detail = '消息字段解析失败'
+    return '消息归档失败（' + stage + ' / ' + type(exc).__name__ + '）：' + detail
+
+
+def install_recorder(coordinator, history, profile, on_error, on_recovered=None):
     original = coordinator.send_message
+    state_lock = threading.Lock()
+    failed = False
+
+    def report(exc, stage):
+        nonlocal failed
+        with state_lock:
+            failed = True
+            on_error(archive_error_detail(exc, stage))
+
+    def save(item):
+        nonlocal failed
+        try:
+            saved = history.save(item)
+        except Exception as exc:
+            report(exc, '写入数据库')
+        else:
+            if saved:
+                with state_lock:
+                    if failed:
+                        failed = False
+                        if on_recovered:
+                            on_recovered()
 
     @functools.wraps(original)
     def send(message):
         item = None
         try:
             item = capture(message, profile)
-            if item:
-                history.save(item)
-        except Exception:
-            on_error()
+        except Exception as exc:
+            report(exc, '解析消息')
+        if item:
+            save(item)
         try:
             result = original(message)
         except BaseException:
             if item:
                 item["delivery"] = "failed"
-                safe_save(item)
+                save(item)
             raise
         if item:
             item["delivery"] = "forwarded" if result is not None else "no_result"
-            safe_save(item)
+            save(item)
         return result
-
-    def safe_save(item):
-        try:
-            history.save(item)
-        except Exception:
-            on_error()
 
     coordinator.send_message = send

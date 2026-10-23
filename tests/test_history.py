@@ -188,3 +188,28 @@ class DeleteTests(unittest.TestCase):
             history.save(fresh)
             self.assertEqual(history.delete_records('default', key, row['id'], row['captured_at']), 0)
             self.assertEqual(history.stats('default')['messages'], 1)
+
+
+class ArchiveDiagnosticsTests(unittest.TestCase):
+    def test_error_classification_and_no_private_content(self):
+        import sqlite3
+        from efb_manager.history import archive_error_detail
+        for error, expected in [(sqlite3.OperationalError('database is locked'), '数据库忙'),
+                                (sqlite3.OperationalError('no such table: deleted_messages'), '结构不完整'),
+                                (sqlite3.OperationalError('attempt to write a readonly database'), '只读'),
+                                (ValueError('private message text'), '消息字段解析失败')]:
+            detail = archive_error_detail(error, '解析消息')
+            self.assertIn(expected, detail)
+            self.assertNotIn('private message text', detail)
+
+    def test_write_recovery_clears_error_once(self):
+        import sqlite3
+        store = Mock()
+        store.save.side_effect = [sqlite3.OperationalError('database is locked'), True, True, True]
+        error, recovered = Mock(), Mock()
+        coordinator = NS(send_message=lambda msg: msg)
+        install_recorder(coordinator, store, 'default', error, recovered)
+        coordinator.send_message(message())
+        coordinator.send_message(message(uid='next'))
+        self.assertIn('数据库忙', error.call_args.args[0])
+        recovered.assert_called_once()

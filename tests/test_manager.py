@@ -116,3 +116,13 @@ class StateTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class ArchiveStateTests(unittest.TestCase):
+    def test_recovered_clears_visible_error_and_retains_log(self):
+        service = Service()
+        service.event({'kind': 'archive_error', 'error': '数据库忙'})
+        self.assertEqual(service.snapshot()['archive_error'], '数据库忙')
+        service.event({'kind': 'archive_recovered'})
+        self.assertIsNone(service.snapshot()['archive_error'])
+        self.assertIn('数据库忙', service.snapshot()['logs'])
