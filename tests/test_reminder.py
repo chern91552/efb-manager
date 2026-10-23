@@ -14,7 +14,7 @@ class ReminderTests(unittest.TestCase):
             path = Path(root) / 'settings.json'
             settings = ReminderSettings(path)
             self.assertFalse(settings.read()['enabled'])
-            policy = {'enabled': True, 'hours': 0.01}
+            policy = {'enabled': True, 'hours': 0.01, 'message': '请重新登录微信\n这是自定义提醒'}
             settings.update(policy)
             self.assertEqual(ReminderSettings(path).read(), policy)
             for hours in [0, -1, True, '24', float('nan'), float('inf'), 8761]:
@@ -59,3 +59,21 @@ class ReminderTests(unittest.TestCase):
             self.assertNotIn('private response', emit.call_args.kwargs['message'])
             controller.check_reminder({'enabled': True, 'hours': 1})
             bot.file_helper.send.assert_called_once()
+
+    def test_custom_message_sent_verbatim_and_blank_uses_default(self):
+        for message in ['微信登录满 29 天了\n请检查 {原文保留}', '', '   ']:
+            reminder, bot = LoginReminder(), Mock(alive=True)
+            reminder.login(0)
+            reminder.tick(bot, True, False, {'enabled': True, 'hours': 696, 'message': message}, 696*3600)
+            sent = bot.file_helper.send.call_args.args[0]
+            if message.strip():
+                self.assertEqual(sent, message)
+            else:
+                self.assertIn('EFB Manager', sent)
+
+    def test_old_settings_and_invalid_messages(self):
+        from efb_manager.reminder import validate_settings
+        self.assertEqual(validate_settings({'enabled': True, 'hours': 24})['message'], '')
+        for message in [None, 123, 'x'*501, 'bad\x00text']:
+            with self.assertRaises(ValueError):
+                validate_settings({'enabled': True, 'hours': 24, 'message': message})

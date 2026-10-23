@@ -67,7 +67,7 @@ class HTTPTests(unittest.TestCase):
                 self.assertEqual(status, 200)
                 self.assertEqual(json.loads(data)['process'], 'stopped')
                 self.assertEqual(json.loads(data)['archive']['messages'], 2)
-                reminder_policy = {'enabled': True, 'hours': 23.5}
+                reminder_policy = {'enabled': True, 'hours': 23.5, 'message': '登录到期提醒\n请检查微信'}
                 self.assertEqual(request('GET', '/api/reminder-settings')[0], 401)
                 self.assertEqual(request('POST', '/api/reminder-settings', reminder_policy)[0], 401)
                 self.assertEqual(request('POST', '/api/reminder-settings', reminder_policy, cookie=cookie, origin=False)[0], 403)

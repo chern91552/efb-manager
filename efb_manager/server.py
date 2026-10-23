@@ -144,7 +144,7 @@ def main():
                 return self.send(403, {"error": "来源验证失败"})
             try:
                 length = int(self.headers.get("Content-Length", "0"))
-                if not 0 < length <= 4096:
+                if not 0 < length <= 8192:
                     raise ValueError("请求大小无效")
                 body = json.loads(self.rfile.read(length))
                 if not isinstance(body, dict):

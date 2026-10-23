@@ -13,7 +13,10 @@ def validate_settings(data):
         raise ValueError('请选择是否启用提醒')
     if isinstance(hours, bool) or not isinstance(hours, (int, float)) or not math.isfinite(hours) or not 0.01 <= hours <= 8760:
         raise ValueError('提醒时长须为 0.01 到 8760 小时')
-    return {'enabled': enabled, 'hours': hours}
+    message = data.get('message', '')
+    if not isinstance(message, str) or len(message) > 500 or any(ord(c) < 32 and c not in '\n\r\t' for c in message):
+        raise ValueError('提醒内容须为最多 500 字的文本，可换行')
+    return {'enabled': enabled, 'hours': hours, 'message': message}
 
 
 class ReminderSettings:
@@ -25,7 +28,7 @@ class ReminderSettings:
         try:
             return validate_settings(json.loads(self.path.read_text()))
         except FileNotFoundError:
-            return {'enabled': False, 'hours': 24}
+            return {'enabled': False, 'hours': 24, 'message': ''}
 
     def update(self, data):
         result = validate_settings(data)
@@ -60,9 +63,11 @@ class LoginReminder:
             return False
         # A timeout may follow successful delivery; never blindly send twice.
         self.attempted = True
-        bot.file_helper.send(
+        default_message = (
             '【EFB Manager 登录到期提醒】\n'
             f'本次微信会话在线时长已达到设定的 {settings["hours"]:g} 小时'
             f'（当前约 {elapsed / 3600:.2f} 小时）。\n'
             '请按需打开 EFB Manager 检查或重新登录。此提醒不代表微信已失效，不会自动退出。')
+        message = settings.get('message', '')
+        bot.file_helper.send(message if message.strip() else default_message)
         return True
