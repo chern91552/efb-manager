@@ -11,6 +11,7 @@ import time
 
 from .qr_login import fresh_qr_login
 from .reminder import LoginReminder, ReminderSettings
+from .reminder_delivery import ReminderDelivery, ReminderSyncError
 
 PREFIX = "EFB_MANAGER_EVENT:"
 _output_lock = threading.Lock()
@@ -31,6 +32,7 @@ class LoginController:
         self.online = False
         self.force_qr = False
         self.reminder = LoginReminder()
+        self.reminder_delivery = None
 
     def install(self, cls):
         original_auth = cls.authenticate
@@ -129,15 +131,25 @@ class LoginController:
         with self.lock:
             if self.channel is None or not self.online or self.busy:
                 return
+            if self.reminder_delivery and (not hasattr(self.channel, 'chats') or
+                    getattr(self.reminder_delivery.coordinator, 'master', None) is None):
+                return  # Wait for EFB initialization before sending to any destination.
             try:
                 sent = self.reminder.tick(self.channel.bot, self.online, self.busy,
-                                          settings, time.monotonic())
+                                          settings, time.monotonic(),
+                                          on_sent=self._forward_reminder if self.reminder_delivery else None)
+            except ReminderSyncError as exc:
+                emit("reminder_error", message="提醒已发送至微信文件传输助手，但同步到 EFB 失败（" +
+                     str(exc) + "）。请检查 Telegram 和消息记录；不会再次向微信发送。")
             except Exception as exc:
                 emit("reminder_error", message="登录到期提醒发送失败或结果不确定（" + type(exc).__name__ +
                      "）；请检查文件传输助手。本次登录不自动重发，以免重复提醒。")
             else:
                 if sent:
-                    emit("reminder_sent", message="登录到期提醒已发送至微信文件传输助手。")
+                    emit("reminder_sent", message="登录到期提醒已发送至微信文件传输助手，并已提交 EFB 转发与归档。")
+
+    def _forward_reminder(self, sent, text):
+        self.reminder_delivery.forward(self.channel, sent, text)
 
     def _login(self):
         try:
@@ -165,6 +177,7 @@ def main():
                              os.environ.get("EFB_MANAGER_PROFILE", "default"),
                              lambda: emit("archive_error", error="消息归档失败，请检查磁盘空间和数据库权限"))
         controller = LoginController()
+        controller.reminder_delivery = ReminderDelivery(coordinator)
         controller.install(WeChatChannel)
         reminder_path = os.environ.get("EFB_MANAGER_REMINDER_SETTINGS")
         if reminder_path:

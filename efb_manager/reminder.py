@@ -54,7 +54,7 @@ class LoginReminder:
         self.started = now
         self.attempted = False
 
-    def tick(self, bot, online, busy, settings, now):
+    def tick(self, bot, online, busy, settings, now, on_sent=None):
         if (not settings['enabled'] or not online or busy or self.started is None
                 or self.attempted or not bot.alive):
             return False
@@ -69,5 +69,8 @@ class LoginReminder:
             f'（当前约 {elapsed / 3600:.2f} 小时）。\n'
             '请按需打开 EFB Manager 检查或重新登录。此提醒不代表微信已失效，不会自动退出。')
         message = settings.get('message', '')
-        bot.file_helper.send(message if message.strip() else default_message)
+        text = message if message.strip() else default_message
+        sent = bot.file_helper.send(text)
+        if on_sent is not None:
+            on_sent(sent, text)
         return True
