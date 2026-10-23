@@ -1,6 +1,5 @@
 """EFB child entrypoint. Adapts the installed official channel without editing it."""
 import base64
-from contextlib import nullcontext
 import importlib.metadata
 import io
 import json
@@ -9,7 +8,7 @@ import sys
 import threading
 import time
 
-from .qr_login import fresh_qr_login
+from .qr_login import fresh_qr_login, cached_login_then_wait
 from .reminder import LoginReminder, ReminderSettings
 from .reminder_delivery import ReminderDelivery, ReminderSyncError
 
@@ -30,6 +29,7 @@ class LoginController:
         self.busy = False
         self.ready = False
         self.online = False
+        self.waiting_for_scan = False
         self.force_qr = False
         self.reminder = LoginReminder()
         self.reminder_delivery = None
@@ -60,15 +60,12 @@ class LoginController:
                 raise RuntimeError("此版本仅支持一个微信从端实例")
             controller.channel = channel
             if first_start:
-                emit("waiting")
                 controller.ready = True
-                controller.gate.wait()
-                controller.gate.clear()
             with controller.lock:
                 controller.busy = True
             try:
                 emit("logging_in")
-                with fresh_qr_login() if controller.force_qr else nullcontext():
+                with fresh_qr_login() if controller.force_qr else cached_login_then_wait(controller.wait_for_scan):
                     if controller.force_qr:
                         print("强制扫码登录：跳过缓存会话恢复和手机快捷确认，正在获取新二维码。", flush=True)
                     original_auth(channel, "manager_qr_code", first_start=first_start)
@@ -83,6 +80,7 @@ class LoginController:
                 raise
             finally:
                 with controller.lock:
+                    controller.waiting_for_scan = False
                     controller.force_qr = False
                     controller.busy = False
 
@@ -107,15 +105,17 @@ class LoginController:
             if self.channel is None or not self.ready:
                 raise RuntimeError("微信从端尚未初始化")
             if action in ("login", "login_qr"):
+                if self.waiting_for_scan:
+                    if action != "login_qr":
+                        raise RuntimeError("缓存恢复失败，请点击扫码登录")
+                    self.waiting_for_scan = False
+                    self.gate.set()
+                    return
                 if self.busy or self.online or self.gate.is_set():
                     raise RuntimeError("正在登录或已经在线")
                 self.force_qr = action == "login_qr"
-                if not hasattr(self.channel, "chats"):
-                    self.busy = True
-                    self.gate.set()
-                else:
-                    self.busy = True
-                    threading.Thread(target=self._login, daemon=True).start()
+                self.busy = True
+                threading.Thread(target=self._login, daemon=True).start()
             elif action == "logout":
                 if self.busy:
                     raise RuntimeError("登录过程中请使用停止 EFB 取消")
@@ -126,6 +126,16 @@ class LoginController:
                 emit("offline", at=time.time())
             else:
                 raise ValueError("未知命令")
+
+    def wait_for_scan(self):
+        with self.lock:
+            self.gate.clear()
+            self.waiting_for_scan = True
+            self.online = False
+            emit("awaiting_scan")
+        self.gate.wait()
+        self.gate.clear()
+        emit("logging_in")
 
     def check_reminder(self, settings):
         with self.lock:

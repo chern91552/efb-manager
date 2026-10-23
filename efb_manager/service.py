@@ -43,7 +43,7 @@ class Service:
         with self.lock:
             kind = event["kind"]
             self.last_event = time.monotonic()
-            if kind in ("waiting", "logging_in", "scanned", "confirming"):
+            if kind in ("waiting", "logging_in", "scanned", "confirming", "awaiting_scan"):
                 self.state.update(wechat=kind, qr=None if kind != "scanned" else self.state["qr"], error=None)
             elif kind == "qr":
                 self.state.update(wechat="waiting_scan", qr=event["image"], error=None)

@@ -1,4 +1,4 @@
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from types import SimpleNamespace
 import threading
 import time
@@ -54,17 +54,16 @@ class FreshQRTests(unittest.TestCase):
         controller = LoginController()
         controller.install(Channel)
         channel = Channel()
-        with patch('efb_manager.runner.fresh_qr_login', context), patch('efb_manager.runner.emit'):
+        with patch('efb_manager.runner.fresh_qr_login', context), patch('efb_manager.runner.cached_login_then_wait', lambda _: nullcontext()), patch('efb_manager.runner.emit'):
             worker = threading.Thread(target=channel.authenticate, kwargs={'first_start': True})
             worker.start()
             for _ in range(100):
                 if controller.ready:
                     break
                 time.sleep(.01)
-            controller.command('login_qr')
             worker.join(2)
             self.assertFalse(worker.is_alive())
-            self.assertEqual(modes, [True])
+            self.assertEqual(modes, [False])
             self.assertFalse(controller.force_qr)
             with self.assertRaises(RuntimeError):
                 controller.command('login_qr')
@@ -79,3 +78,66 @@ class FreshQRTests(unittest.TestCase):
                 self.assertEqual(modes[-1], expected)
                 self.assertFalse(controller.force_qr)
         self.assertEqual(active, [])
+
+
+class CachedLoginTests(unittest.TestCase):
+    def test_cache_success_does_not_wait_or_request_qr(self):
+        from efb_manager.qr_login import cached_login_then_wait
+        restore, login, push, wait = Mock(return_value=True), Mock(), Mock(), Mock()
+        core_class = type('Core', (), {'load_login_status': restore, 'login': login})
+        module = SimpleNamespace(push_login=push)
+        with cached_login_then_wait(wait, module, core_class):
+            core = core_class()
+            if not core.load_login_status('wxpy.pkl'):
+                core.login()
+        wait.assert_not_called()
+        login.assert_not_called()
+        self.assertIs(core_class.login, login)
+        self.assertIs(core_class.load_login_status, restore)
+        self.assertIs(module.push_login, push)
+
+    def test_cache_failure_waits_for_qr_click_in_same_authentication(self):
+        from efb_manager.qr_login import cached_login_then_wait
+        for fail in (False, ValueError('invalid cache')):
+            with self.subTest(fail=fail):
+                restore = Mock(return_value=False)
+                if fail:
+                    restore.side_effect = fail
+                login, push = Mock(), Mock()
+                core_class = type('Core', (), {'load_login_status': restore, 'login': login})
+                module = SimpleNamespace(push_login=push)
+                controller = LoginController()
+                def context(wait):
+                    return cached_login_then_wait(wait, module, core_class)
+                class Channel:
+                    def authenticate(self, qr_reload, first_start=False):
+                        core = core_class()
+                        if not core.load_login_status('wxpy.pkl'):
+                            core.login()
+                        self.bot = SimpleNamespace(alive=True)
+                controller.install(Channel)
+                channel = Channel()
+                with patch('efb_manager.runner.cached_login_then_wait', context), patch('efb_manager.runner.emit') as emit:
+                    worker = threading.Thread(target=channel.authenticate, kwargs={'first_start': True})
+                    worker.start()
+                    try:
+                        for _ in range(100):
+                            if controller.waiting_for_scan:
+                                break
+                            time.sleep(.01)
+                        self.assertTrue(controller.waiting_for_scan)
+                        self.assertFalse(controller.online)
+                        login.assert_not_called()
+                        push.assert_not_called()
+                        self.assertIn('awaiting_scan', [call.args[0] for call in emit.call_args_list])
+                        with self.assertRaises(RuntimeError):
+                            controller.command('login')
+                        controller.command('login_qr')
+                    finally:
+                        controller.gate.set()
+                        worker.join(2)
+                    self.assertFalse(worker.is_alive())
+                    login.assert_called_once()
+                    self.assertTrue(controller.online)
+                    self.assertFalse(controller.busy)
+                    self.assertIs(core_class.load_login_status, restore)

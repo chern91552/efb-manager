@@ -97,6 +97,18 @@ class HTTPTests(unittest.TestCase):
                 self.assertEqual(status, 200)
                 self.assertIn('扫码登录'.encode(), html)
                 self.assertIn('data-action="login_qr"'.encode(), html)
+                status, _, data = request('GET', '/api/messages?' + urlencode({'chat': key}), cookie=cookie)
+                record = json.loads(data)['items'][0]
+                deletion = {'scope': 'message', 'chat': key, 'id': record['id'], 'captured_at': record['captured_at']}
+                self.assertEqual(request('POST', '/api/delete-records', deletion)[0], 401)
+                self.assertEqual(request('POST', '/api/delete-records', deletion, cookie=cookie, origin=False)[0], 403)
+                self.assertEqual(request('POST', '/api/delete-records', {'scope': 'invalid'}, cookie=cookie)[0], 400)
+                status, _, data = request('POST', '/api/delete-records', deletion, cookie=cookie)
+                self.assertEqual(status, 200)
+                self.assertEqual(json.loads(data)['deleted'], 1)
+                status, _, data = request('POST', '/api/delete-records', {'scope': 'conversation', 'chat': key}, cookie=cookie)
+                self.assertEqual(json.loads(data)['deleted'], 1)
+                self.assertEqual(archive.stats('default')['messages'], 0)
                 status,_,data=request('GET','/api/archive-settings',cookie=cookie)
                 self.assertEqual(status,200)
                 self.assertFalse(json.loads(data)['record_public'])

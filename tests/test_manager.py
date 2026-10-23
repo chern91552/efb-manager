@@ -1,3 +1,4 @@
+from contextlib import nullcontext
 import threading
 import time
 import unittest
@@ -25,7 +26,12 @@ def channel_class():
 
 
 class ControllerTests(unittest.TestCase):
-    def test_first_login_waits_for_user_and_logout_stays_offline(self):
+    def setUp(self):
+        patcher = patch('efb_manager.runner.cached_login_then_wait', lambda _: nullcontext())
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_first_login_automatically_restores_and_logout_stays_offline(self):
         cls = channel_class()
         controller = LoginController()
         controller.install(cls)
@@ -37,8 +43,6 @@ class ControllerTests(unittest.TestCase):
                 if controller.ready:
                     break
                 time.sleep(.01)
-            self.assertFalse(hasattr(channel, 'bot'))
-            controller.command('login')
             worker.join(2)
             self.assertFalse(worker.is_alive())
             self.assertTrue(controller.online)

@@ -144,3 +144,47 @@ class HistoryTests(unittest.TestCase):
         self.assertIsNone(capture(msg, 'default'))
         msg.chat = NS(module_id='blueset.wechat', uid='__ews_user_auth__')
         self.assertIsNone(capture(msg, 'default'))
+
+
+class DeleteTests(unittest.TestCase):
+    def test_delete_is_scoped_and_late_updates_do_not_restore_records(self):
+        with tempfile.TemporaryDirectory() as root:
+            history = History(Path(root)/'messages.sqlite3')
+            item = capture(message(uid='delete-me'), 'default')
+            history.save(item)
+            history.save(dict(item, profile='other'))
+            history.save(dict(item, chat_id='another'))
+            key = history.key(item['channel'], item['chat_id'])
+            record = history.messages('default', key)['items'][0]
+            self.assertEqual(history.delete_records('default', history.key(item['channel'], 'another'), record['id']), 0)
+            self.assertEqual(history.delete_records('default', key, record['id']), 1)
+            self.assertFalse(history.save(dict(item, delivery='forwarded')))
+            self.assertEqual(history.stats('other')['messages'], 1)
+            self.assertEqual(history.stats('default')['messages'], 1)
+
+    def test_clear_conversation_allows_future_messages(self):
+        with tempfile.TemporaryDirectory() as root:
+            history = History(Path(root)/'messages.sqlite3')
+            item = capture(message(), 'default')
+            history.save(item)
+            key = history.key(item['channel'], item['chat_id'])
+            self.assertEqual(history.delete_records('default', key), 1)
+            self.assertFalse(history.save(dict(item, message_id='in-flight')))
+            self.assertTrue(history.save(capture(message(uid='new-message'), 'default')))
+            self.assertEqual(history.stats('default')['messages'], 1)
+            for invalid in [None, 'bad', '{}', '["only-one"]']:
+                with self.assertRaises(ValueError):
+                    history.delete_records('default', invalid)
+
+    def test_stale_browser_cannot_delete_a_reused_row_id(self):
+        with tempfile.TemporaryDirectory() as root:
+            history = History(Path(root)/'messages.sqlite3')
+            item = capture(message(), 'default')
+            history.save(item)
+            key = history.key(item['channel'], item['chat_id'])
+            row = history.messages('default', key)['items'][0]
+            history.delete_records('default', key, row['id'], row['captured_at'])
+            fresh = capture(message(uid='fresh'), 'default')
+            history.save(fresh)
+            self.assertEqual(history.delete_records('default', key, row['id'], row['captured_at']), 0)
+            self.assertEqual(history.stats('default')['messages'], 1)

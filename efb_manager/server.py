@@ -5,6 +5,7 @@ import ipaddress
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+import math
 import os
 from pathlib import Path
 import signal
@@ -175,6 +176,24 @@ def main():
                 return self.send(200, {"ok": True}, cookie=f"efb_session={session}; HttpOnly; SameSite=Strict; Path=/")
             if not self.authorized():
                 return self.send(401, {"error": "请先登录管理器"})
+            if self.path == "/api/delete-records":
+                try:
+                    scope = body.get("scope")
+                    if scope not in ("message", "conversation"):
+                        raise ValueError("删除范围无效")
+                    if scope == "message" and type(body.get("id")) is not int:
+                        raise ValueError("消息编号无效")
+                    captured_at = body.get("captured_at")
+                    if scope == "message" and (type(captured_at) not in (int, float) or not math.isfinite(captured_at)):
+                        raise ValueError("消息时间无效，请刷新后重试")
+                    count = history.delete_records(args.profile, body.get("chat"),
+                                                   body["id"] if scope == "message" else None,
+                                                   captured_at if scope == "message" else None)
+                    return self.send(200, {"deleted": count})
+                except ValueError as exc:
+                    return self.send(400, {"error": str(exc)})
+                except Exception:
+                    return self.send(503, {"error": "记录删除失败，请稍后重试"})
             if self.path == "/api/reminder-settings":
                 try:
                     return self.send(200, reminder.update(body))

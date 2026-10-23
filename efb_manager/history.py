@@ -39,6 +39,14 @@ class History:
                 CREATE INDEX IF NOT EXISTS messages_chat
                     ON messages(profile, channel, chat_id, id DESC);
                 CREATE INDEX IF NOT EXISTS messages_oldest ON messages(captured_at, id);
+                CREATE TABLE IF NOT EXISTS deleted_messages (
+                    profile TEXT, channel TEXT, chat_id TEXT, direction TEXT, message_id TEXT,
+                    PRIMARY KEY(profile,channel,chat_id,direction,message_id)
+                );
+                CREATE TABLE IF NOT EXISTS cleared_chats (
+                    profile TEXT, channel TEXT, chat_id TEXT, cleared_at REAL,
+                    PRIMARY KEY(profile,channel,chat_id)
+                );
                 CREATE TABLE IF NOT EXISTS archive_config (
                     id INTEGER PRIMARY KEY CHECK(id=1),
                     record_private INTEGER NOT NULL DEFAULT 1,
@@ -70,6 +78,12 @@ class History:
         values = {**item, "body": body}
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
+            identity = tuple(item[k] for k in ('profile', 'channel', 'chat_id', 'direction', 'message_id'))
+            if db.execute("SELECT 1 FROM deleted_messages WHERE profile=? AND channel=? AND chat_id=? AND direction=? AND message_id=?", identity).fetchone():
+                return False
+            cleared = db.execute("SELECT cleared_at FROM cleared_chats WHERE profile=? AND channel=? AND chat_id=?", identity[:3]).fetchone()
+            if cleared and item['captured_at'] <= cleared['cleared_at']:
+                return False
             policy = db.execute("SELECT * FROM archive_config WHERE id=1").fetchone()
             key = {"Public": "record_public", "Group": "record_group"}.get(item["chat_type"], "record_private")
             if not policy[key]:
@@ -187,6 +201,33 @@ class History:
         rows = rows[:limit]
         return dict(items=[dict(r) for r in reversed(rows)],
                     next_before=rows[-1]["id"] if more else None)
+
+    def delete_records(self, profile, key, message_id=None, captured_at=None):
+        try:
+            decoded = json.loads(key)
+            if not isinstance(decoded, list) or len(decoded) != 2 or not all(isinstance(v, str) and v for v in decoded):
+                raise ValueError()
+            channel, chat_id = decoded
+        except (TypeError, ValueError):
+            raise ValueError("会话参数无效") from None
+        if message_id is not None and (type(message_id) is not int or message_id <= 0):
+            raise ValueError("消息编号无效")
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            params = [profile, channel, chat_id]
+            where = "profile=? AND channel=? AND chat_id=?"
+            if message_id is not None:
+                where += " AND id=?"
+                params.append(message_id)
+                if captured_at is not None:
+                    where += " AND captured_at=?"
+                    params.append(captured_at)
+            # Keep identifiers only, so an in-flight delivery update cannot restore deleted text.
+            db.execute("INSERT OR IGNORE INTO deleted_messages SELECT profile,channel,chat_id,direction,message_id FROM messages WHERE " + where, params)
+            if message_id is None:
+                db.execute("INSERT INTO cleared_chats VALUES (?,?,?,?) ON CONFLICT(profile,channel,chat_id) DO UPDATE SET cleared_at=excluded.cleared_at",
+                           [profile, channel, chat_id, time.time()])
+            return db.execute("DELETE FROM messages WHERE " + where, params).rowcount
 
     def stats(self, profile):
         with self.connect() as db:
