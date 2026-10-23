@@ -24,7 +24,7 @@ class HTTPTests(unittest.TestCase):
             archive = History(Path(tmp) / 'messages.sqlite3')
             archive.save(capture(message(body='HTTP 测试文字'), 'default'))
             archive.save(capture(message('Image', body='不保存的图片说明', uid='image'), 'default'))
-            child = subprocess.Popen([sys.executable, '-m', 'efb_manager.server',
+            child = subprocess.Popen([sys.executable, '-m', 'efb_manager.server', '--no-auto-start',
                                       '--port', str(port), '--state-dir', tmp],
                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             try:

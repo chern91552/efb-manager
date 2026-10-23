@@ -40,6 +40,7 @@ def main():
     parser.add_argument("--host", default="127.0.0.1", help="监听地址；服务器 IP 直连可用 0.0.0.0")
     parser.add_argument("--allowed-host", action="append", default=[], help="额外允许访问的域名，不带协议和端口，可重复设置")
     parser.add_argument("--state-dir", type=Path, default=Path.home() / ".local/state/efb-manager")
+    parser.add_argument("--no-auto-start", action="store_true", help="仅启动管理器，不自动启动 EFB")
     parser.add_argument("--set-password", action="store_true", help="交互设置管理口令后退出；运行中的服务需重启生效")
     args = parser.parse_args()
     if os.name == "posix":
@@ -236,6 +237,11 @@ def main():
     signal.signal(signal.SIGINT, shutdown)
     print(f"监听地址：{args.host}:{args.port}\n管理口令文件：{token_file}", flush=True)
     try:
+        if not args.no_auto_start:
+            try:
+                service.start()
+            except (OSError, ValueError) as exc:
+                service.event({"kind": "fatal", "error": "EFB 自动启动失败（" + type(exc).__name__ + "），可在页面重试启动。"})
         server.serve_forever()
     finally:
         cleanup_stop.set()

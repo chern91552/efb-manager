@@ -27,7 +27,7 @@ class NetworkTests(unittest.TestCase):
         with socket.socket() as sock:
             sock.bind(('127.0.0.1',0));port=sock.getsockname()[1]
         with tempfile.TemporaryDirectory(dir=os.environ.get('EFB_MANAGER_TEST_TMP')) as tmp:
-            child=subprocess.Popen([sys.executable,'-m','efb_manager.server','--host','0.0.0.0','--port',str(port),'--state-dir',tmp],stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+            child=subprocess.Popen([sys.executable,'-m','efb_manager.server','--no-auto-start','--host','0.0.0.0','--port',str(port),'--state-dir',tmp],stdout=subprocess.PIPE,stderr=subprocess.PIPE)
             try:
                 def request(method,path,body=None,cookie=None,origin=None,host=None):
                     conn=http.client.HTTPConnection('127.0.0.1',port,timeout=3)

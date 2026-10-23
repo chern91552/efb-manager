@@ -71,7 +71,7 @@ efb-manager --profile default --port 8765
 cat ~/.local/state/efb-manager/access-token
 ```
 
-浏览器打开 [http://127.0.0.1:8765](http://127.0.0.1:8765)，输入口令。进入“微信管理”，点击“启动 EFB”，先尝试恢复缓存；恢复失败或没有缓存时暂停，点击“扫码登录”后才显示二维码，再在手机上扫描确认。
+浏览器打开 [http://127.0.0.1:8765](http://127.0.0.1:8765)，输入口令。管理器就绪后自动启动 EFB 并尝试恢复缓存；恢复失败或没有缓存时暂停，点击“扫码登录”后才显示二维码，再在手机上扫描确认。
 
 首次启动从端时，EFB 可能在等待登录完成后才继续初始化其余组件。点击“退出微信”只结束 EFB 的微信会话，手机微信继续正常使用。主动退出后保持离线；再次登录需要手动点击。
 
@@ -101,7 +101,7 @@ cat ~/.local/state/efb-manager/access-token
 sudo systemctl restart efb-manager
 ```
 
-这次服务重启会停止它管理的 EFB，之后需在页面重新启动 EFB 和登录微信。网页修改口令不需要重启。已有随机口令继续可用，不会因升级自动重置。
+这次服务重启会停止它管理的 EFB，之后自动重新启动 EFB 并恢复缓存，失败时在页面点击“扫码登录”。网页修改口令不需要重启。已有随机口令继续可用，不会因升级自动重置。
 
 使用 root 运行、未指定 `--state-dir` 时，口令文件是 `/root/.local/state/efb-manager/access-token`。命令行设置和服务启动必须使用相同用户、HOME 和 state 目录。真实口令不应放入命令参数、Git 或 systemd 配置中。
 
@@ -133,7 +133,7 @@ sudo systemctl daemon-reload
 sudo systemctl restart efb-manager.service
 ```
 
-不要在已有管理器服务之外再手动启动第二个实例。重启管理器后需要在页面重新启动 EFB 和登录微信。
+不要在已有管理器服务之外再手动启动第二个实例。重启管理器后会自动启动 EFB 并恢复缓存，失败时再点击“扫码登录”。
 
 使用域名直接访问时，额外指定允许的域名，例如 `--allowed-host manager.example.com`（只填域名，不填协议或端口，可重复设置）。IP 直连无需此参数。当前服务直接提供 HTTP，不自动签发证书，不读取 `X-Forwarded-*` 来信任代理。
 
@@ -167,7 +167,7 @@ sudo systemctl status efb-manager --no-pager
 sudo journalctl -u efb-manager -n 50 --no-pager
 ```
 
-此服务只自动启动管理器，EFB 和微信登录仍由页面手动启动。访问口令保存在服务用户 HOME 下的 `.local/state/efb-manager/access-token`，不是当前管理员或 root 的 HOME。
+此服务启动管理器后，会自动启动一次 EFB 并恢复缓存；失败时暂停，等待在页面点击“扫码登录”。可使用 `--no-auto-start` 禁用自动启动 EFB。访问口令保存在服务用户 HOME 下的 `.local/state/efb-manager/access-token`，不是当前管理员或 root 的 HOME。
 
 日常管理：
 
@@ -177,7 +177,7 @@ sudo systemctl stop efb-manager
 sudo journalctl -u efb-manager -f
 ```
 
-重启管理器也会停止其 EFB 子进程；重启后需在页面重新启动 EFB 和登录微信。
+重启管理器也会停止其 EFB 子进程；重启后自动启动 EFB 并恢复缓存，失败时在页面点击“扫码登录”。
 
 ## 5. 配置参数与数据
 
@@ -241,7 +241,7 @@ sudo systemctl stop efb.service
 sudo systemctl restart efb-manager.service
 ```
 
-刷新页面，点击“启动 EFB”，缓存恢复失败后再点击“扫码登录”。日志应显示“使用已安装微信从端的原始登录协议。”。强制扫码只跳过缓存会话恢复与手机快捷确认，不删除缓存文件，成功后仍按原流程保存新会话。
+刷新页面，等待自动恢复缓存，失败后再点击“扫码登录”。日志应显示“使用已安装微信从端的原始登录协议。”。强制扫码只跳过缓存会话恢复与手机快捷确认，不删除缓存文件，成功后仍按原流程保存新会话。
 
 旧 UOS 适配仅在显式环境变量 `EFB_MANAGER_LEGACY_UOS=1` 下启用；原服务能登录时保持默认即可。若你曾手动设置该变量，请移除后重启。管理器的适配从未修改 site-packages 文件，无需重装或删除登录缓存。
 
