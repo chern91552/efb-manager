@@ -5,7 +5,7 @@ const nodes={},requests=[];let accepted=false;
 const context={$:id=>nodes[id]||(nodes[id]={hidden:true,style:{},offsetWidth:200,offsetHeight:50,contains:()=>true}),
  innerWidth:400,innerHeight:300,document:{addEventListener:()=>{}},window:{addEventListener:()=>{}},
  confirm:()=>accepted,request:async(path,body)=>requests.push({path,body}),refresh:async()=>{},refreshChats:async()=>{},notice:()=>{},
- messageEpoch:0,conversationEpoch:0,chatKey:'different-chat',Math};
+ messageEpoch:0,conversationEpoch:0,chatKey:'different-chat',blockedChatKeys:new Set(),Math};
 vm.createContext(context);vm.runInContext(source,context);
 let handler;context.element={addEventListener:(_,fn)=>handler=fn};
 context.target={scope:'message',chat:'["blueset.wechat","one"]',id:3,captured_at:123};

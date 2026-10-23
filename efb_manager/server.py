@@ -125,7 +125,7 @@ def main():
                     return params.get(name, [default])[0]
                 try:
                     if url.path == "/api/state":
-                        return self.send(200, {**service.snapshot(), "archive": history.stats(args.profile), "storage": history.settings(), "reminder": reminder.read(), "blacklist": history.blacklist(args.profile)})
+                        return self.send(200, {**service.snapshot(), "archive": history.stats(args.profile), "storage": history.settings(), "reminder": reminder.read()})
                     if url.path == "/api/archive-blacklist":
                         return self.send(200, {"items": history.blacklist(args.profile)})
                     if url.path == "/api/reminder-settings":

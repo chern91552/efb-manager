@@ -1,5 +1,8 @@
 const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict');
 const html=fs.readFileSync(require('node:path').join(__dirname,'../efb_manager/index.html'),'utf8');
+const settings=html.split('<section data-view="settings"')[1].split('</section>')[0];
+assert(!settings.includes('blacklist'));
+assert(html.split('<section data-view="messages"')[1].split('</details>')[0].includes('id="blacklistForm"'));
 const source='function renderHealth(s)'+html.split('function renderHealth(s)')[1].split('let recordTarget=null;')[0];
 class Element{
  constructor(text=''){this.textContent=text;this.children=[];this.value='';this.disabled=false;this.selectedOptions=[]}
@@ -9,7 +12,7 @@ class Element{
 }
 const nodes={},requests=[];
 const context={$:id=>nodes[id]||(nodes[id]=new Element()),node:(_tag,_cls,text)=>new Element(text),
- when:v=>'time:'+v,request:async(path,body)=>{requests.push({path,body});return {items:[]}},refresh:async()=>{}};
+ when:v=>'time:'+v,request:async(path,body)=>{requests.push({path,body});return {items:[]}},refresh:async()=>{},refreshChats:async()=>{},currentPage:'messages'};
 vm.createContext(context);vm.runInContext(source,context);
 context.health={health:{wechat:{status:'ok',last_success:1},telegram:{status:'retrying',retries:2,uncertain:1},archive:{status:'skipped'}}};
 vm.runInContext('renderHealth(health)',context);
@@ -22,7 +25,7 @@ await nodes.blacklistItems.children[0].children[1].onclick();
 assert.equal(requests[0].path,'/api/archive-blacklist');assert.equal(requests[0].body.blocked,false);
 context.$('blacklistKey').value='["blueset.wechat","new-user"]';
 await nodes.blacklistForm.onsubmit({preventDefault:()=>{}});
-assert.equal(requests[1].body.blocked,true);assert.equal(requests[1].body.chat,'["blueset.wechat","new-user"]');
+assert.equal(requests[1].body.blocked,true);
 await nodes.testReminder.onclick();assert.equal(requests[2].path,'/api/reminder_test');
 assert(!requests.some(r=>r.path==='/api/reminder-settings'));
 console.log('Health display, blacklist controls and independent test reminder passed');

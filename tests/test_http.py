@@ -105,7 +105,7 @@ class HTTPTests(unittest.TestCase):
                 self.assertEqual(json.loads(data)['items'][0]['key'], key)
                 status, _, data = request('GET', '/api/state', cookie=cookie)
                 self.assertIn('health', json.loads(data))
-                self.assertEqual(json.loads(data)['blacklist'][0]['key'], key)
+                self.assertNotIn('blacklist', json.loads(data))
                 block['blocked'] = False
                 self.assertEqual(request('POST', '/api/archive-blacklist', block, cookie=cookie)[0], 200)
                 self.assertEqual(request('POST', '/api/reminder_test', {})[0], 401)
